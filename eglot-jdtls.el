@@ -109,7 +109,7 @@
       (user-error "[eglot-jdtls] eglot-jdtls-config :cmd should be either a function or list")))))
 
 (cl-defmethod eglot-initialization-options ((server eglot-jdtls-server))
-  "Return initialization options for JDT LS server."
+  "Return initialization options for JDT LS SERVER."
   (let* ((init-options (plist-get eglot-jdtls-config :init-options))
          (default-init-options (plist-get eglot-jdtls--default-config :init-options))
          (bundles (or (plist-get init-options :bundles)
@@ -128,9 +128,11 @@
 (defun eglot-jdtls--select (items prompt display-item-fn
                                    &optional multiple-p transform-fn)
   "Select an item from ITEMS using PROMPT.
-DISPLAY-ITEM-FN is used to display items in completion.
-If MULTIPLE-P is non-nil, use `completing-read-multiple' to select multiple items.
-TRANSFORM-FN is applied to selected items before returning them."
+DISPLAY-ITEM-FN is a function of one argument used to display items
+in completion.
+If MULTIPLE-P is non-nil, select multiple items.
+TRANSFORM-FN is a function of one argument applied to selected item
+before returning them."
   (let* ((cands (mapcar
                  (lambda (item)
                    (cons (funcall display-item-fn item) item))
@@ -167,7 +169,22 @@ TRANSFORM-FN is applied to selected items before returning them."
     (cl-find-if filter-fn servers)))
 
 (defun eglot-jdtls-uri-handler (operation &rest args)
-  "Support Eclipse jdtls `jdt://' uri scheme."
+  "Handle file operations for Eclipse JDT Language Server `jdt://' URIs.
+
+This URI handler enables Emacs to access Java source files that are
+bundled in JAR files or stored in the JDT server's virtual filesystem.
+It fetches source content from the JDT LS and caches it locally.
+
+OPERATION is the file operation to perform.
+ARGS contains the operation arguments, typically starting with the URI.
+
+Supported operations:
+  - `expand-file-name': Return the local cached file path
+  - `file-truename': Return the local cached file path
+  - `file-local-name': Return the local cached file path
+  - `file-remote-p': Return nil (files are always local after caching)
+
+Unrecognized operations are forwarded to the default file handlers."
   (let* ((uri (car args))
          (cache-dir eglot-jdtls-cache-dir)
          (_ (string-match "jdt://contents/\\(.*?\\)/\\(.*\\)\.class\\?" uri))
@@ -200,11 +217,18 @@ TRANSFORM-FN is applied to selected items before returning them."
 (add-to-list 'file-name-handler-alist '("\\`jdt://" . eglot-jdtls-uri-handler))
 
 (defun eglot-jdtls--apply-workspaceEdit (arguments)
-  "Command `java.apply.workspaceEdit' handler."
+  "Apply workspace edit(s) from JDT LS command `java.apply.workspaceEdit'.
+
+ARGUMENTS is a list of workspace edit objects to apply."
   (mapc #'eglot--apply-workspace-edit arguments this-command))
 
 (defun eglot-jdtls--override-methods-prompt (server arguments)
-  "Command `java.action.overrideMethodsPrompt' handler."
+  "Handle JDT LS command `java.action.overrideMethodsPrompt'.
+
+Prompt user to select methods to override and generate override method stubs.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is the context information for where to add the override methods."
   (let* ((argument (seq-elt arguments 0))
          (list-methods-result (jsonrpc-request server :java/listOverridableMethods argument))
          (methods (plist-get list-methods-result :methods))
@@ -228,7 +252,10 @@ TRANSFORM-FN is applied to selected items before returning them."
     (eglot--apply-workspace-edit add-methods-result this-command)))
 
 (defun eglot-jdlts--show-references (command arguments)
-  "Show Java references from LSP arguments."
+  "Display Java references using Emacs xref interface.
+
+COMMAND is the JDT LS command name
+ARGUMENTS is a list containing reference information"
   (if-let* ((refs (seq-elt arguments 2))
             (_ (length> refs 0)))
       (xref-show-xrefs
@@ -242,7 +269,10 @@ TRANSFORM-FN is applied to selected items before returning them."
     (message "%s returned no references" command)))
 
 (defun eglot-jdtls--rename (arguments)
-  "Execute Java rename action using Eglot LSP."
+  "Execute Java rename action using Eglot's interactive rename interface.
+
+ARGUMENTS is a list containing a map with uri, offset, and length
+identifying the element to rename."
   (pcase-let* (((map :uri :offset :length) (seq-elt arguments 0)))
     (with-current-buffer (find-file (eglot-uri-to-path uri))
       (deactivate-mark)
@@ -255,7 +285,10 @@ TRANSFORM-FN is applied to selected items before returning them."
       (deactivate-mark))))
 
 (defun eglot-jdtls--generate-toString-prompt (server arguments)
-  "Prompt user to generate toString method for Java class using Eglot LSP."
+  "Prompt user to generate toString method for Java class.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list containing context information for the class."
   (pcase-let* ((params (seq-elt arguments 0))
                (check-resp (jsonrpc-request
                             server :java/checkToStringStatus
@@ -277,7 +310,10 @@ TRANSFORM-FN is applied to selected items before returning them."
         (eglot--apply-workspace-edit generate-result this-command)))))
 
 (defun eglot-jdtls--hashCode-equals-prompt (server arguments)
-  "Prompt user to generate hashCode and equals methods for Java class using Eglot LSP."
+  "Prompt user to generate hashCode and equals methods for Java class.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list containing context information for the class."
   (pcase-let* ((params (seq-elt arguments 0))
                (check-resp (jsonrpc-request
                             server :java/checkHashCodeEqualsStatus
@@ -301,8 +337,11 @@ TRANSFORM-FN is applied to selected items before returning them."
                                 :regenerate (not (seq-empty-p existingMethods))))))
         (eglot--apply-workspace-edit generate-result this-command)))))
 
-(defun java-action-generateAccessorsPrompt (server arguments)
-  "Prompt user to generate accessor methods for Java fields using Eglot LSP."
+(defun eglot-jdtls--generate-accessors-prompt (server arguments)
+  "Prompt user to generate accessor methods (getters and setters) for Java fields.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list containing context information for the class."
   (let* ((params (seq-elt arguments 0))
          (accessorFields (jsonrpc-request
                           server :java/resolveUnimplementedAccessors
@@ -320,8 +359,11 @@ TRANSFORM-FN is applied to selected items before returning them."
                                  :context params))))
     (eglot--apply-workspace-edit generate-result this-command)))
 
-(defun java-action-generateConstructorsPrompt (server arguments)
-  "Prompt user to generate constructors for Java classes using Eglot LSP."
+(defun eglot-jdtls-generate-constructors-prompt (server arguments)
+  "Prompt user to generate constructors for Java class.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list containing context information for the class."
   (pcase-let* ((params (seq-elt arguments 0))
                (check-resp (jsonrpc-request
                             server :java/checkConstructorsStatus
@@ -347,8 +389,13 @@ TRANSFORM-FN is applied to selected items before returning them."
                                                        :fields selected-fields))))
     (eglot--apply-workspace-edit generate-result this-command)))
 
-(defun java-action-generateDelegateMethodsPromptSupport (server arguments)
-  "Prompt user to generate delegate methods for Java fields using Eglot LSP."
+(defun eglot-jdtls-generate-delegate-methods-prompt-support (server arguments)
+  "Prompt user to generate delegate methods for Java fields.
+
+Delegate methods are wrapper methods that delegate calls to methods of a field.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list containing context information for the class."
   (pcase-let*
       ((params (seq-elt arguments 0))
        (check-resp (jsonrpc-request
@@ -384,7 +431,13 @@ TRANSFORM-FN is applied to selected items before returning them."
     (eglot--apply-workspace-edit generate-result this-command)))
 
 (defun eglot-jdtls--refactor-edit (server refactor-edit)
-  "Apply REFACTOR-EDIT to workspace."
+  "Apply a JDT LS refactoring edit result to the workspace.
+
+SERVER is the JDT Language Server instance.
+REFACTOR-EDIT is a map containing the refactoring result with:
+  - `edit': Workspace edit to apply (optional)
+  - `command': Follow-up command to execute after the edit (optional)
+  - `errorMessage': Error message if the refactoring failed (optional)"
   (pcase-let*
       (((map :edit :command (:errorMessage err)) refactor-edit))
     (when err
@@ -395,8 +448,11 @@ TRANSFORM-FN is applied to selected items before returning them."
       (eglot-execute server command))))
 
 (defun eglot-jdtls--move-file (server arguments)
-  "Move Java file to a new package.
-Arguments are provided by the Java refactoring command."
+  "Move Java source file to a different package.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list containing the move operation context from JDT LS
+command, with the file URI at index 2."
   (cl-block nil
     (let* ((uris (vector (plist-get (seq-elt arguments 2) :uri)))
            (move-dest-resp (jsonrpc-request
@@ -432,8 +488,14 @@ Arguments are provided by the Java refactoring command."
       (eglot-jdtls--refactor-edit server result))))
 
 (defun eglot-jdtls--instant-method (server arguments)
-  "Move instance method to another class.
-Arguments are provided by the Java refactoring command."
+  "Move an instance method to a different class (field or method parameter).
+
+The method is moved to either a field's type or a method parameter's type,
+converting it to a static method in the target class.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list containing the move operation context from JDT LS
+command, with parameters at index 1 and display info at index 2."
   (cl-block nil
     (let* ((params (seq-elt arguments 1))
            (uris (vector (plist-get (plist-get params :textDocument) :uri)))
@@ -472,7 +534,11 @@ Arguments are provided by the Java refactoring command."
 
 (defun eglot-jdtls--select-target-class (server prompt project-name excludes)
   "Select a target class from symbols in PROJECT-NAME.
-EXCLUDES is a list of class names to exclude from selection."
+
+SERVER is the JDT Language Server instance used to search for symbols.
+PROMPT is the completion prompt to display to the user.
+PROJECT-NAME is the name of the project to search for symbols.
+EXCLUDES is a list of fully-qualified class names to exclude from selection."
   (let* ((symbols (jsonrpc-request
                    server :java/searchSymbols
                    (list :query "*"
@@ -494,8 +560,10 @@ EXCLUDES is a list of class names to exclude from selection."
                                 (format "%s %s" name containerName)))))))
 
 (defun eglot-jdtls--move-static-member (server arguments)
-  "Move static member to another class.
-Arguments are provided by the Java refactoring command."
+  "Move a static member (field, method, or type) to another class.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list provided by the Java refactoring command."
   (cl-block nil
     (pcase-let*
         ((`[_cmd ,params ,cmd-info] arguments)
@@ -531,8 +599,10 @@ Arguments are provided by the Java refactoring command."
       (eglot-jdtls--refactor-edit server result))))
 
 (defun eglot-jdtls--move-type (server arguments)
-  "Move a type (class, interface, enum, etc.) to another location.
-Arguments are provided by the Java refactoring command."
+  "Move a type (class, interface, enum, or annotation type) to another location.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list provided by the Java refactoring command."
   (cl-block nil
     (pcase-let*
         ((`[_cmd ,params ,cmd-info] arguments)
@@ -575,8 +645,10 @@ Arguments are provided by the Java refactoring command."
       (eglot-jdtls--refactor-edit server result))))
 
 (defun eglot-jdtls--change-signature (server arguments)
-  "Change method signature interactively.
-Arguments are provided by the Java refactoring command."
+  "Change method signature interactively using a dedicated edit buffer.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list provided by the Java refactoring command."
   (cl-block nil
     (pcase-let*
         ((`[,cmd ,params] arguments)
@@ -758,8 +830,9 @@ Arguments are provided by the Java refactoring command."
           (switch-to-buffer-other-window edit-buf))))))
 
 (defun eglot-jdtls--resolve-scopes (scopes)
-  "Resolve initialization scope from SCOPES.
-If there are multiple scopes, prompt user to select one."
+  "Resolve initialization scope from available SCOPES.
+
+SCOPES is a list of scope identifiers."
   (pcase (length scopes)
     (0 nil)
     (1 (seq-elt scopes 0))
@@ -768,7 +841,13 @@ If there are multiple scopes, prompt user to select one."
         (append scopes nil)))))
 
 (defun eglot-jdtls--get-expression (cmd params server)
-  "Get expression for refactoring command CMD with PARAMS."
+  "Infer and select an expression for refactoring operations.
+
+CMD is the refactoring command name (e.g., \"extractMethod\", \"extractVariable\",
+\"extractConstant\", \"extractField\").
+PARAMS is the context parameters for the refactoring operation.
+SERVER is the JDT Language Server instance (unused, server is obtained via
+eglot-current-server internally)."
   (let* ((expressions (jsonrpc-request
                        (eglot-current-server) :java/inferSelection
                        (list :command cmd
@@ -790,8 +869,10 @@ If there are multiple scopes, prompt user to select one."
             (plist-get expression :name)))))))
 
 (defun eglot-jdtls--extract-interface (server arguments)
-  "Extract interface from a class.
-Arguments are provided by the Java refactoring command."
+  "Extract an interface from a class by selecting members and specifying destination.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list provided by the Java refactoring command."
   (cl-block nil
     (pcase-let*
         ((`[,cmd ,params] arguments)
@@ -854,8 +935,10 @@ Arguments are provided by the Java refactoring command."
          doc-changes)))))
 
 (defun eglot-jdtls--apply-refactoring-command (server arguments)
-  "Apply Java refactoring command.
-Dispatch to appropriate refactoring handler based on command type."
+  "Apply Java refactoring command by dispatching to appropriate handler.
+
+SERVER is the JDT Language Server instance.
+ARGUMENTS is a list provided by the Java refactoring command."
   (let* ((cmd (seq-elt arguments 0))
          (params (seq-elt arguments 1)))
     (cond
@@ -929,6 +1012,12 @@ Dispatch to appropriate refactoring handler based on command type."
   ((_server eglot-jdtls-server)
    (_method (eql workspace/executeClientCommand))
    &key command arguments &allow-other-keys)
+  "Handle workspace/executeClientCommand requests from JDT Language Server.
+
+_SERVER is the JDT Language Server instance.
+_METHOD is always 'workspace/executeClientCommand' (via method specialization).
+COMMAND is the client command name to execute.
+ARGUMENTS is a keyword argument containing the command arguments."
   (pcase command
     ("java.action.organizeImports.chooseImports"
      (pcase-let*
@@ -950,7 +1039,14 @@ Dispatch to appropriate refactoring handler based on command type."
 
 (cl-defmethod eglot-execute :around
   ((server eglot-jdtls-server) action)
-  "Custom handler for performing client commands."
+  "Custom handler for performing JDT client commands.
+
+SERVER is the JDT Language Server instance.
+ACTION is a plist containing:
+  - `command': The client command name to execute
+  - `arguments': Command arguments
+
+Disables vertico-sort-function to preserve order for selection prompts."
   (let ((command (plist-get action :command))
         (arguments (plist-get action :arguments))
         (vertico-sort-function nil))
@@ -959,9 +1055,9 @@ Dispatch to appropriate refactoring handler based on command type."
       ("java.action.overrideMethodsPrompt" (eglot-jdtls--override-methods-prompt server arguments))
       ("java.action.generateToStringPrompt" (eglot-jdtls--generate-toString-prompt server arguments))
       ("java.action.hashCodeEqualsPrompt" (eglot-jdtls--hashCode-equals-prompt server arguments))
-      ("java.action.generateAccessorsPrompt" (java-action-generateAccessorsPrompt server arguments))
-      ("java.action.generateConstructorsPrompt" (java-action-generateConstructorsPrompt server arguments))
-      ("java.action.generateDelegateMethodsPrompt" (java-action-generateDelegateMethodsPromptSupport server arguments))
+      ("java.action.generateAccessorsPrompt" (eglot-jdtls--generate-accessors-prompt server arguments))
+      ("java.action.generateConstructorsPrompt" (eglot-jdtls-generate-constructors-prompt server arguments))
+      ("java.action.generateDelegateMethodsPrompt" (eglot-jdtls-generate-delegate-methods-prompt-support server arguments))
       ("java.action.applyRefactoringCommand" (eglot-jdtls--apply-refactoring-command server arguments))
       ("java.action.rename" (eglot-jdtls--rename arguments))
       ("java.show.references" (eglot-jdlts--show-references command arguments))
