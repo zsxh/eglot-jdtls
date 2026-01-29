@@ -38,7 +38,7 @@
 
 
 (defgroup eglot-jdtls nil
-  ""
+  "Settings for Eclipse JDT Language Server integration with Eglot."
   :group 'eglot
   :prefix "eglot-jdtls-"
   :link '(url-link :tag "GitHub" "https://github.com/zsxh/eglot-jdtls"))
@@ -95,7 +95,7 @@
 ;; Eglot jdtls config
 
 (defun eglot-jdtls-cmd (_interactive)
-  ""
+  "Return the JDT Language Server command for Eglot."
   (let ((cmd (or (plist-get eglot-jdtls-config :cmd)
                  (plist-get eglot-jdtls--default-config :cmd))))
     (cond
@@ -109,7 +109,7 @@
       (user-error "[eglot-jdtls] eglot-jdtls-config :cmd should be either a function or list")))))
 
 (cl-defmethod eglot-initialization-options ((server eglot-jdtls-server))
-  ""
+  "Return initialization options for JDT LS server."
   (let* ((init-options (plist-get eglot-jdtls-config :init-options))
          (default-init-options (plist-get eglot-jdtls--default-config :init-options))
          (bundles (or (plist-get init-options :bundles)
@@ -126,8 +126,11 @@
 ;; CodeAction / Commands
 
 (defun eglot-jdtls--select (items prompt display-item-fn
-                                  &optional multiple-p transform-fn)
-  ""
+                                   &optional multiple-p transform-fn)
+  "Select an item from ITEMS using PROMPT.
+DISPLAY-ITEM-FN is used to display items in completion.
+If MULTIPLE-P is non-nil, use `completing-read-multiple' to select multiple items.
+TRANSFORM-FN is applied to selected items before returning them."
   (let* ((cands (mapcar
                  (lambda (item)
                    (cons (funcall display-item-fn item) item))
@@ -146,7 +149,7 @@
       (funcall item-fn (completing-read prompt cands)))))
 
 (defun eglot-jdtls--format-options ()
-  ""
+  "Return formatting options for Java code actions."
   (list
    :tabSize tab-width
    :insertSpaces (if indent-tabs-mode
@@ -154,7 +157,7 @@
                    t)))
 
 (defun eglot-jdtls--find-jdt-server ()
-  ""
+  "Find the active JDT Language Server for the current project."
   (let ((filter-fn (lambda (server)
                      (cl-loop for (mode . languageid) in
                               (eglot--languages server)
@@ -381,7 +384,7 @@
     (eglot--apply-workspace-edit generate-result this-command)))
 
 (defun eglot-jdtls--refactor-edit (server refactor-edit)
-  ""
+  "Apply REFACTOR-EDIT to workspace."
   (pcase-let*
       (((map :edit :command (:errorMessage err)) refactor-edit))
     (when err
@@ -392,7 +395,8 @@
       (eglot-execute server command))))
 
 (defun eglot-jdtls--move-file (server arguments)
-  ""
+  "Move Java file to a new package.
+Arguments are provided by the Java refactoring command."
   (cl-block nil
     (let* ((uris (vector (plist-get (seq-elt arguments 2) :uri)))
            (move-dest-resp (jsonrpc-request
@@ -428,7 +432,8 @@
       (eglot-jdtls--refactor-edit server result))))
 
 (defun eglot-jdtls--instant-method (server arguments)
-  ""
+  "Move instance method to another class.
+Arguments are provided by the Java refactoring command."
   (cl-block nil
     (let* ((params (seq-elt arguments 1))
            (uris (vector (plist-get (plist-get params :textDocument) :uri)))
@@ -466,7 +471,8 @@
       (eglot-jdtls--refactor-edit server result))))
 
 (defun eglot-jdtls--select-target-class (server prompt project-name excludes)
-  ""
+  "Select a target class from symbols in PROJECT-NAME.
+EXCLUDES is a list of class names to exclude from selection."
   (let* ((symbols (jsonrpc-request
                    server :java/searchSymbols
                    (list :query "*"
@@ -488,7 +494,8 @@
                                 (format "%s %s" name containerName)))))))
 
 (defun eglot-jdtls--move-static-member (server arguments)
-  ""
+  "Move static member to another class.
+Arguments are provided by the Java refactoring command."
   (cl-block nil
     (pcase-let*
         ((`[_cmd ,params ,cmd-info] arguments)
@@ -524,7 +531,8 @@
       (eglot-jdtls--refactor-edit server result))))
 
 (defun eglot-jdtls--move-type (server arguments)
-  ""
+  "Move a type (class, interface, enum, etc.) to another location.
+Arguments are provided by the Java refactoring command."
   (cl-block nil
     (pcase-let*
         ((`[_cmd ,params ,cmd-info] arguments)
@@ -567,7 +575,8 @@
       (eglot-jdtls--refactor-edit server result))))
 
 (defun eglot-jdtls--change-signature (server arguments)
-  ""
+  "Change method signature interactively.
+Arguments are provided by the Java refactoring command."
   (cl-block nil
     (pcase-let*
         ((`[,cmd ,params] arguments)
@@ -749,7 +758,8 @@
           (switch-to-buffer-other-window edit-buf))))))
 
 (defun eglot-jdtls--resolve-scopes (scopes)
-  ""
+  "Resolve initialization scope from SCOPES.
+If there are multiple scopes, prompt user to select one."
   (pcase (length scopes)
     (0 nil)
     (1 (seq-elt scopes 0))
@@ -758,7 +768,7 @@
         (append scopes nil)))))
 
 (defun eglot-jdtls--get-expression (cmd params server)
-  ""
+  "Get expression for refactoring command CMD with PARAMS."
   (let* ((expressions (jsonrpc-request
                        (eglot-current-server) :java/inferSelection
                        (list :command cmd
@@ -780,7 +790,8 @@
             (plist-get expression :name)))))))
 
 (defun eglot-jdtls--extract-interface (server arguments)
-  ""
+  "Extract interface from a class.
+Arguments are provided by the Java refactoring command."
   (cl-block nil
     (pcase-let*
         ((`[,cmd ,params] arguments)
@@ -843,7 +854,8 @@
          doc-changes)))))
 
 (defun eglot-jdtls--apply-refactoring-command (server arguments)
-  ""
+  "Apply Java refactoring command.
+Dispatch to appropriate refactoring handler based on command type."
   (let* ((cmd (seq-elt arguments 0))
          (params (seq-elt arguments 1)))
     (cond
