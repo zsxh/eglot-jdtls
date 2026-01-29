@@ -236,9 +236,9 @@ ARGUMENTS is the context information for where to add the override methods."
                             methods
                             "Select methods: "
                             (lambda (method)
-                              (pcase-let* (((map :name
-                                                 :parameters
-                                                 :declaringClass) method))
+                              (pcase-let*
+                                  (((map :name :parameters
+                                      (:declaringClass class)) method))
                                 (format "%s(%s): %s"
                                         name
                                         (mapconcat #'identity parameters ", ")
@@ -303,11 +303,11 @@ ARGUMENTS is a list containing context information for the class."
                                  (pcase-let* (((map :name :type) field))
                                    (format "%s: %s" name type)))
                                t))
-             (generate-result (jsonrpc-request
+             (result (jsonrpc-request
                                server :java/generateToString
                                (list :fields selected-fields
                                      :context params))))
-        (eglot--apply-workspace-edit generate-result this-command)))))
+        (eglot--apply-workspace-edit result this-command)))))
 
 (defun eglot-jdtls--hashCode-equals-prompt (server arguments)
   "Prompt user to generate hashCode and equals methods for Java class.
@@ -329,13 +329,13 @@ ARGUMENTS is a list containing context information for the class."
                                  (pcase-let* (((map :name :type) field))
                                    (format "%s: %s" name type)))
                                t))
-             (generate-result (jsonrpc-request
+             (result (jsonrpc-request
                                server :java/generateHashCodeEquals
                                (list
                                 :fields selected-fields
                                 :context params
                                 :regenerate (not (seq-empty-p existingMethods))))))
-        (eglot--apply-workspace-edit generate-result this-command)))))
+        (eglot--apply-workspace-edit result this-command)))))
 
 (defun eglot-jdtls--generate-accessors-prompt (server arguments)
   "Prompt user to generate accessor methods (getters and setters) for Java fields.
@@ -343,51 +343,57 @@ ARGUMENTS is a list containing context information for the class."
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list containing context information for the class."
   (let* ((params (seq-elt arguments 0))
-         (accessorFields (jsonrpc-request
-                          server :java/resolveUnimplementedAccessors
-                          params))
+         (accessor-fields (jsonrpc-request
+                           server :java/resolveUnimplementedAccessors
+                           params))
          (selected-accessors (eglot-jdtls--select
-                              accessorFields
+                              accessor-fields
                               "Select fields to generate: "
                               (lambda (field)
-                                (pcase-let* (((map :fieldName :typeName) field))
-                                  (format "%s: %s" fieldName typeName)))
+                                (pcase-let*
+                                    (((map (:fieldName field)
+                                           (:typeName type)) field))
+                                  (format "%s: %s" field type)))
                               t))
-         (generate-result (jsonrpc-request
-                           server :java/generateAccessors
-                           (list :accessors selected-accessors
-                                 :context params))))
-    (eglot--apply-workspace-edit generate-result this-command)))
+         (result (jsonrpc-request
+                  server :java/generateAccessors
+                  (list :accessors selected-accessors
+                        :context params))))
+    (eglot--apply-workspace-edit result this-command)))
 
 (defun eglot-jdtls-generate-constructors-prompt (server arguments)
   "Prompt user to generate constructors for Java class.
 
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list containing context information for the class."
-  (pcase-let* ((params (seq-elt arguments 0))
-               (check-resp (jsonrpc-request
-                            server :java/checkConstructorsStatus
-                            params))
-               ((map :constructors :fields) check-resp)
-               (selected-constructors (eglot-jdtls--select
-                                       constructors
-                                       "Select constructors to generate: "
-                                       (lambda (constructor)
-                                         (pcase-let* (((map :name :parameters) field))
-                                           (format "%s(%s)" name (mapconcat #'identity parameters ", "))))
-                                       t))
-               (selected-fields (eglot-jdtls--select
-                                 fields
-                                 "Select fields to generate: "
-                                 (lambda (field)
-                                   (pcase-let* (((map :name :type) field))
-                                     (format "%s: %s" name type)))
-                                 t))
-               (generate-result (jsonrpc-request server :java/generateConstructors
-                                                 (list :context params
-                                                       :constructors selected-constructors
-                                                       :fields selected-fields))))
-    (eglot--apply-workspace-edit generate-result this-command)))
+  (pcase-let*
+      ((params (seq-elt arguments 0))
+       (check-resp (jsonrpc-request
+                    server :java/checkConstructorsStatus
+                    params))
+       ((map :constructors :fields) check-resp)
+       (selected-constructors (eglot-jdtls--select
+                               constructors
+                               "Select constructors to generate: "
+                               (lambda (constructor)
+                                 (pcase-let*
+                                     (((map :name :parameters) constructor))
+                                   (format
+                                    "%s(%s)" name
+                                    (mapconcat #'identity parameters ", "))))
+                               t))
+       (selected-fields (eglot-jdtls--select
+                         fields
+                         "Select fields to generate: "
+                         (lambda (field)
+                           (pcase-let* (((map :name :type) field))
+                             (format "%s: %s" name type)))
+                         t))
+       (result (jsonrpc-request server :java/generateConstructors
+                                (list :context params
+                                      :constructors selected-constructors
+                                      :fields selected-fields))))
+    (eglot--apply-workspace-edit result this-command)))
 
 (defun eglot-jdtls-generate-delegate-methods-prompt-support (server arguments)
   "Prompt user to generate delegate methods for Java fields.
@@ -409,9 +415,8 @@ ARGUMENTS is a list containing context information for the class."
                               ((field (plist-get item :field))
                                ((map :name :type) field))
                             (format "%s: %s" name type)))))
-       (field (plist-get selected-field :field))
+       ((map :field (:delegateMethods delegate-methods)) selected-field)
        (field-name (plist-get field :name))
-       (delegate-methods (plist-get selected-field-item :delegateMethods))
        (selected-methods (eglot-jdtls--select
                           delegate-methods
                           "Select methods to generate delegates for: "
@@ -424,11 +429,11 @@ ARGUMENTS is a list containing context information for the class."
                           t
                           (lambda (method)
                             (list :field field :delegateMethod method))))
-       (generate-result (jsonrpc-request
-                         server :java/generateDelegateMethods
-                         (list :context params
-                               :delegateEntries selected-methods))))
-    (eglot--apply-workspace-edit generate-result this-command)))
+       (result (jsonrpc-request
+                server :java/generateDelegateMethods
+                (list :context params
+                      :delegateEntries selected-methods))))
+    (eglot--apply-workspace-edit result this-command)))
 
 (defun eglot-jdtls--refactor-edit (server refactor-edit)
   "Apply a JDT LS refactoring edit result to the workspace.
@@ -499,10 +504,11 @@ command, with parameters at index 1 and display info at index 2."
   (cl-block nil
     (let* ((params (seq-elt arguments 1))
            (uris (vector (plist-get (plist-get params :textDocument) :uri)))
-           (move-dest-resp (jsonrpc-request server :java/getMoveDestinations
-                                           (list :moveKind "moveInstanceMethod"
-                                                 :sourceUris uris
-                                                 :params params)))
+           (move-dest-resp (jsonrpc-request
+                            server :java/getMoveDestinations
+                            (list :moveKind "moveInstanceMethod"
+                                  :sourceUris uris
+                                  :params params)))
            (err-msg (plist-get move-dest-resp :errorMessage))
            (_ (when err-msg (message "%s" err-msg) (cl-return)))
            (destinations (plist-get move-dest-resp :destinations))
@@ -518,18 +524,19 @@ command, with parameters at index 1 and display info at index 2."
                           (or (plist-get (seq-elt arguments 2) :displayName)
                               ""))
                          (lambda (item)
-                           (pcase-let* (((map :name :type :isField) item))
+                           (pcase-let* (((map :name :type
+                                           (:isField is-field)) item))
                              (format "%s %s %s"
-                                     (if (eq isField :json-false)
+                                     (if (eq is-field :json-false)
                                          "[Method Parameter]"
                                        "[Field]           ")
                                      type name)))))
            (result (jsonrpc-request server :java/move
-                                   (list :moveKind "moveInstanceMethod"
-                                         :sourceUris uris
-                                         :params params
-                                         :destination destination
-                                         :updateReferences t))))
+                                    (list :moveKind "moveInstanceMethod"
+                                          :sourceUris uris
+                                          :params params
+                                          :destination destination
+                                          :updateReferences t))))
       (eglot-jdtls--refactor-edit server result))))
 
 (defun eglot-jdtls--select-target-class (server prompt project-name excludes)
@@ -554,10 +561,12 @@ EXCLUDES is a list of fully-qualified class names to exclude from selection."
                                 (not (member name excludes))))
                             symbols)))
     (when (length> filtered-symbols 0)
-      (eglot-jdtls--select filtered-symbols prompt
-                            (lambda (item)
-                              (pcase-let* (((map :name :containerName) item))
-                                (format "%s %s" name containerName)))))))
+      (eglot-jdtls--select
+       filtered-symbols
+       prompt
+       (lambda (item)
+         (pcase-let* (((map :name :containerName) item))
+           (format "%s %s" name containerName)))))))
 
 (defun eglot-jdtls--move-static-member (server arguments)
   "Move a static member (field, method, or type) to another class.
@@ -616,7 +625,8 @@ ARGUMENTS is a list provided by the Java refactoring command."
               (message "No available destination kinds")
               (cl-return)))
          (kind (eglot-jdtls--select
-                kinds "What would you like to do?"
+                kinds
+                "What would you like to do?"
                 (lambda (item)
                   (pcase item
                     ("newFile" (format "Move type %s to new file" display-name))
@@ -848,10 +858,10 @@ CMD is the refactoring command name (e.g., \"extractMethod\", \"extractVariable\
 PARAMS is the context parameters for the refactoring operation.
 SERVER is the JDT Language Server instance (unused, server is obtained via
 eglot-current-server internally)."
-  (let* ((expressions (jsonrpc-request
-                       (eglot-current-server) :java/inferSelection
-                       (list :command cmd
-                             :context params))))
+  (let ((expressions (jsonrpc-request
+                      (eglot-current-server) :java/inferSelection
+                      (list :command cmd
+                            :context params))))
     (pcase (length expressions)
       (0 nil)
       (1 (seq-elt expressions 0))
