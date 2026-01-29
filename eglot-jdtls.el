@@ -187,7 +187,8 @@ Supported operations:
 Unrecognized operations are forwarded to the default file handlers."
   (let* ((uri (car args))
          (cache-dir eglot-jdtls-cache-dir)
-         (_ (string-match "jdt://contents/\\(.*?\\)/\\(.*\\)\.class\\?" uri))
+         (_ (unless (string-match "jdt://contents/\\(.*?\\)/\\(.*\\)\.class\\?" uri)
+              (error "Invalid JDT URI format: %s" uri)))
          (jar-file (substring uri (match-beginning 1) (match-end 1)))
          (java-file (format "%s.java" (replace-regexp-in-string "/" "." (substring uri (match-beginning 2) (match-end 2)) t t)))
          (jar-dir (concat (file-name-as-directory cache-dir)
@@ -199,6 +200,8 @@ Unrecognized operations are forwarded to the default file handlers."
                           ;; NOTE: dape https://github.com/svaante/dape/issues/78#issuecomment-1966786597
                           (eglot-jdtls--find-jdt-server))
                       :java/classFileContents (list :uri uri))))
+        (unless content
+          (error "No java class content"))
         (unless (file-directory-p jar-dir) (make-directory jar-dir t))
         (with-temp-file source-file (insert content))))
     (cond
@@ -361,7 +364,7 @@ ARGUMENTS is a list containing context information for the class."
                         :context params))))
     (eglot--apply-workspace-edit result this-command)))
 
-(defun eglot-jdtls-generate-constructors-prompt (server arguments)
+(defun eglot-jdtls--generate-constructors-prompt (server arguments)
   "Prompt user to generate constructors for Java class.
 
 SERVER is the JDT Language Server instance.
@@ -395,7 +398,7 @@ ARGUMENTS is a list containing context information for the class."
                                       :fields selected-fields))))
     (eglot--apply-workspace-edit result this-command)))
 
-(defun eglot-jdtls-generate-delegate-methods-prompt-support (server arguments)
+(defun eglot-jdtls--generate-delegate-methods-prompt-support (server arguments)
   "Prompt user to generate delegate methods for Java fields.
 
 Delegate methods are wrapper methods that delegate calls to methods of a field.
@@ -974,8 +977,9 @@ ARGUMENTS is a list provided by the Java refactoring command."
                           ((equal cmd "extractField")
                            (cond
                             ((use-region-p)
-                             (let* ((_ (length> arguments 2))
-                                    (cmd-info (seq-elt arguments 2))
+                             (unless (length> arguments 2)
+                               (cl-return))
+                             (let* ((cmd-info (seq-elt arguments 2))
                                     (scopes (plist-get cmd-info :initializedScopes))
                                     (scope (when scopes (eglot-jdtls--resolve-scopes scopes))))
                                (cond
@@ -993,8 +997,9 @@ ARGUMENTS is a list provided by the Java refactoring command."
                                  (vector expr))
                                 (t (cl-return)))))))
                           ((equal cmd "convertVariableToField")
-                           (let* ((_ (length> arguments 2))
-                                  (cmd-info (seq-elt arguments 2))
+                           (unless (length> arguments 2)
+                             (cl-return))
+                           (let* ((cmd-info (seq-elt arguments 2))
                                   (scopes (plist-get cmd-info :initializedScopes))
                                   (scope (when scopes (eglot-jdtls--resolve-scopes scopes))))
                              (cond
@@ -1066,8 +1071,8 @@ Disables vertico-sort-function to preserve order for selection prompts."
       ("java.action.generateToStringPrompt" (eglot-jdtls--generate-toString-prompt server arguments))
       ("java.action.hashCodeEqualsPrompt" (eglot-jdtls--hashCode-equals-prompt server arguments))
       ("java.action.generateAccessorsPrompt" (eglot-jdtls--generate-accessors-prompt server arguments))
-      ("java.action.generateConstructorsPrompt" (eglot-jdtls-generate-constructors-prompt server arguments))
-      ("java.action.generateDelegateMethodsPrompt" (eglot-jdtls-generate-delegate-methods-prompt-support server arguments))
+      ("java.action.generateConstructorsPrompt" (eglot-jdtls--generate-constructors-prompt server arguments))
+      ("java.action.generateDelegateMethodsPrompt" (eglot-jdtls--generate-delegate-methods-prompt-support server arguments))
       ("java.action.applyRefactoringCommand" (eglot-jdtls--apply-refactoring-command server arguments))
       ("java.action.rename" (eglot-jdtls--rename arguments))
       ("java.show.references" (eglot-jdtls--show-references command arguments))
