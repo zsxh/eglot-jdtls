@@ -13,4 +13,4 @@
 
 (source "gnu")
 
-(depends-on "emacs" "30.2")
+(depends-on "emacs" "30.1")

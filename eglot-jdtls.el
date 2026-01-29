@@ -6,7 +6,7 @@
 ;; Maintainer: zsxh <bnbvbchen@gmail.com>
 ;; URL: https://github.com/zsxh/eglot-jdtls
 ;; Version: 0.0.1
-;; Package-Requires: ((emacs "30.2") (compat "30.1.0.0") (eglot "1.17.30") (jsonrpc "1.0.24"))
+;; Package-Requires: ((emacs "30.1") (compat "30.1.0.0") (eglot "1.17.30") (jsonrpc "1.0.24"))
 ;; Keywords: eglot jdtls
 
 ;; This file is not part of GNU Emacs.
@@ -36,6 +36,20 @@
 (require 'eglot)
 (require 'jsonrpc)
 
+;; Declare internal Eglot functions to suppress byte-compile warnings
+(declare-function eglot--languages "eglot")
+(declare-function eglot--servers-by-project "eglot")
+(declare-function eglot--current-project "eglot")
+(declare-function eglot--apply-workspace-edit "eglot")
+(declare-function eglot--goto "eglot")
+(declare-function eglot--current-server-or-lose "eglot")
+(declare-function eglot--collecting-xrefs "eglot")
+(declare-function eglot--xref-make-match "eglot")
+(declare-function eglot-uri-to-path "eglot")
+(declare-function eglot-path-to-uri "eglot")
+(declare-function eglot-execute "eglot")
+(declare-function eglot-current-server "eglot")
+
 
 (defgroup eglot-jdtls nil
   "Settings for Eclipse JDT Language Server integration with Eglot."
@@ -51,7 +65,7 @@
 ;; Variables
 
 (defcustom eglot-jdtls-cache-dir
-  (expand-file-name "eglot-java" (temporary-file-directory))
+  (expand-file-name "eglot-jdtls" user-emacs-directory)
   "Directory to cache Java source files from jdt:// URIs."
   :type 'directory
   :group 'eglot-jdtls)
@@ -92,6 +106,17 @@
                     :advancedIntroduceParameterRefactoringSupport t)))
   "JDTLS server default config for eglot.")
 
+(defconst eglot-jdtls--symbol-kind-type 55
+  "LSP SymbolKind for Type.")
+(defconst eglot-jdtls--symbol-kind-enum 71
+  "LSP SymbolKind for Enum.")
+(defconst eglot-jdtls--symbol-kind-annotation 81
+  "LSP SymbolKind for Annotation Type.")
+
+(defconst eglot-jdtls--change-signature-buffer-name
+  "*eglot-jdtls:Change Method Signature*"
+  "Buffer name for change signature editing.")
+
 ;; Eglot jdtls config
 
 (defun eglot-jdtls-cmd (_interactive)
@@ -103,25 +128,36 @@
       (funcall cmd))
      ((listp cmd)
       (let ((program (car cmd))
-            (args (cdr cmd)))
-        (cons (executable-find program) args)))
+            (exec (executable-find program)))
+        (unless exec
+          (user-error "[eglot-jdtls] can not find executable cmd"))
+        (cons exec (cdr cmd))))
      (t
       (user-error "[eglot-jdtls] eglot-jdtls-config :cmd should be either a function or list")))))
 
+(defun eglot-jdtls--plist-merge (&rest plists)
+  "Merge multiple PLISTS into one, with later values overriding earlier ones.
+Each argument should be a property list. Returns a new plist."
+  (let ((result nil))
+    (dolist (plist plists)
+      (while plist
+        (setq result (plist-put result (car plist) (cadr plist)))
+        (setq plist (cddr plist))))
+    result))
+
 (cl-defmethod eglot-initialization-options ((server eglot-jdtls-server))
   "Return initialization options for JDT LS SERVER."
-  (let* ((init-options (plist-get eglot-jdtls-config :init-options))
-         (default-init-options (plist-get eglot-jdtls--default-config :init-options))
-         (bundles (or (plist-get init-options :bundles)
-                      (plist-get default-init-options :bundles)))
-         (extendedClientCapabilities (or (plist-get init-options :extendedClientCapabilities)
-                                         (plist-get default-init-options :extendedClientCapabilities)))
-         (settings (or (plist-get eglot-jdtls-config :settings)
-                       (plist-get eglot-jdtls--default-config :settings))))
+  (let* ((user-init (plist-get eglot-jdtls-config :init-options))
+         (default-init (plist-get eglot-jdtls--default-config :init-options))
+         (init-options (eglot-jdtls--plist-merge default-init user-init))
+         (user-settings (plist-get eglot-jdtls-config :settings))
+         (default-settings (plist-get eglot-jdtls--default-config :settings))
+         (settings (eglot-jdtls--plist-merge default-settings user-settings)))
     (list
      :settings settings
-     :extendedClientCapabilities extendedClientCapabilities
-     :bundles bundles)))
+     :extendedClientCapabilities (plist-get init-options
+                                            :extendedClientCapabilities)
+     :bundles (plist-get init-options :bundles))))
 
 ;; CodeAction / Commands
 
@@ -187,7 +223,7 @@ Supported operations:
 Unrecognized operations are forwarded to the default file handlers."
   (let* ((uri (car args))
          (cache-dir eglot-jdtls-cache-dir)
-         (_ (unless (string-match "jdt://contents/\\(.*?\\)/\\(.*\\)\.class\\?" uri)
+         (_ (unless (string-match "jdt://contents/\\([^/]+\\)/\\(.*\\)\\.class\\?" uri)
               (error "Invalid JDT URI format: %s" uri)))
          (jar-file (substring uri (match-beginning 1) (match-end 1)))
          (java-file (format "%s.java" (replace-regexp-in-string "/" "." (substring uri (match-beginning 2) (match-end 2)) t t)))
@@ -195,11 +231,13 @@ Unrecognized operations are forwarded to the default file handlers."
                           (file-name-as-directory jar-file)))
          (source-file (expand-file-name (concat jar-dir java-file))))
     (unless (file-readable-p source-file)
-      (let ((content (jsonrpc-request
-                      (or (eglot-current-server)
-                          ;; NOTE: dape https://github.com/svaante/dape/issues/78#issuecomment-1966786597
-                          (eglot-jdtls--find-jdt-server))
-                      :java/classFileContents (list :uri uri))))
+      (let* ((server (or (eglot-current-server)
+                         ;; NOTE: dape https://github.com/svaante/dape/issues/78#issuecomment-1966786597
+                         (eglot-jdtls--find-jdt-server)))
+             (_ (unless server
+                  (error "No JDT language server running")))
+             (content (jsonrpc-request
+                       server :java/classFileContents (list :uri uri))))
         (unless content
           (error "No java class content"))
         (unless (file-directory-p jar-dir) (make-directory jar-dir t))
@@ -220,10 +258,10 @@ Unrecognized operations are forwarded to the default file handlers."
 (add-to-list 'file-name-handler-alist '("\\`jdt://" . eglot-jdtls-uri-handler))
 
 (defun eglot-jdtls--apply-workspaceEdit (arguments)
-  "Apply workspace edit(s) from JDT LS command `java.apply.workspaceEdit'.
-
-ARGUMENTS is a list of workspace edit objects to apply."
-  (mapc #'eglot--apply-workspace-edit arguments this-command))
+  "Apply workspace edit(s) from JDT LS command `java.apply.workspaceEdit'."
+  (mapc (lambda (edit)
+          (eglot--apply-workspace-edit edit this-command))
+        arguments))
 
 (defun eglot-jdtls--override-methods-prompt (server arguments)
   "Handle JDT LS command `java.action.overrideMethodsPrompt'.
@@ -586,8 +624,10 @@ ARGUMENTS is a list provided by the Java refactoring command."
            (:enclosingTypeName type-name)
            :memberType) cmd-info)
          (excludes (when type-name
-                     (if (memq memberType '(55 71 81))
-                         ;; 55: Type, 71: Enum, 81: AnnotationType
+                     (if (memq memberType
+                               (list eglot-jdtls--symbol-kind-type
+                                     eglot-jdtls--symbol-kind-enum
+                                     eglot-jdtls--symbol-kind-annotation))
                          (list type-name
                                (format "%s.%s"
                                        type-name
@@ -656,191 +696,236 @@ ARGUMENTS is a list provided by the Java refactoring command."
                        :destination target-class)))))
          (result (jsonrpc-request server :java/move move-type-params)))
       (eglot-jdtls--refactor-edit server result))))
+(defun eglot-jdtls--change-signature-make-label (str)
+  "Create a read-only label from STR for the change signature buffer."
+  (propertize str
+              'read-only t
+              'face 'font-lock-keyword-face
+              'front-sticky t
+              'rear-nonsticky t))
+
+(defun eglot-jdtls--change-signature-make-comment (&rest strs)
+  "Create a read-only comment section from STRS for the change signature buffer."
+  (propertize (mapconcat #'identity strs "\n")
+              'read-only t
+              'face 'font-lock-comment-face
+              'front-sticky t
+              'rear-nonsticky t))
+
+(defun eglot-jdtls--change-signature-build-content (sig-info)
+  "Build the edit buffer content lines from SIG-INFO.
+Returns a list of strings to be inserted into the buffer."
+  (pcase-let (((map :modifier :returnType :methodName
+                    :parameters :exceptions) sig-info))
+    (let ((label #'eglot-jdtls--change-signature-make-label))
+      `(,(concat (funcall label "Access modifier: ") modifier)
+        ,(concat (funcall label "Return type: ") returnType)
+        ,(concat (funcall label "Method name: ") methodName)
+        ,(funcall label "Parameters:")
+        ,@(cl-loop for param across parameters
+                   collect
+                   (pcase-let (((map :type :name :originalIndex) param))
+                     (format "- %d: %s %s" originalIndex type name)))
+        ,(funcall label "Exceptions:")
+        ,@(cl-loop for exception across exceptions
+                   for id from 0
+                   collect
+                   (pcase-let (((map :type) exception))
+                     (format "- %d: %s" id type)))
+        ,(concat (funcall label "IsDelegate: ") "false")
+        ""
+        ,(eglot-jdtls--change-signature-make-comment
+          "---"
+          "Labels are used to parse the values. Ensure they remain at the beginning of each line."
+          "Usage:"
+          " - [C-c C-c] refactor"
+          " - [C-c C-k] quit"
+          " - [C-c C-r] reset"
+          ""
+          "Parameters:"
+          " - Order sensitive"
+          " - New param format: '- <type> <name> [defaultValue]'"
+          " - Existing param format: '- <n>: <type> <name>'"
+          " - <n> marks the original index, don't add it for new entries, don't change for moved params"
+          ""
+          "Exceptions:"
+          " - Order insensitive"
+          " - New exception format: '- <type>'"
+          " - Existing exception format: '- <n>: <type>'"
+          " - <n> marks the original type id, don't add it for new entries, don't change for moved exception"
+          ""
+          "Access modifier: ['public'|'protected'|'private'|'']"
+          ""
+          "IsDelegate: ['true'|'false']"
+          " - Keep original method as delegate to changed method"
+          "---")))))
+
+(defun eglot-jdtls--change-signature-set-buffer-content (buf lines)
+  "Set the content of buffer BUF to LINES.
+LINES is a list of strings to insert."
+  (with-current-buffer buf
+    (let ((inhibit-read-only t))
+      (erase-buffer))
+    (dolist (line lines)
+      (insert line)
+      (newline))
+    (goto-char (point-min))))
+
+(defun eglot-jdtls--change-signature-parse-line-item (line section sig-exceptions)
+  "Parse a single LINE item based on current SECTION.
+SIG-EXCEPTIONS are the original exceptions for type ID lookup.
+Returns a plist for parameters or exceptions, or nil if not applicable."
+  (pcase section
+    ('parameters
+     (when (string-match "\\-\\(?: \\([0-9]+\\):\\)? \\(\\S-+\\) \\(\\S-+\\)\\(?: \\(\\S-+\\)\\)?" line)
+       (let ((idx (match-string 1 line))
+             (type (match-string 2 line))
+             (name (match-string 3 line))
+             (default-val (match-string 4 line)))
+         (list :type type
+               :name name
+               :defaultValue (if idx "" (or default-val "null"))
+               :originalIndex (if idx (string-to-number idx) -1)))))
+    ('exception
+     (when (string-match "\\-\\(?: \\([0-9]+\\):\\)? \\(\\S-+\\)" line)
+       (let* ((idx (match-string 1 line))
+              (type (match-string 2 line))
+              (type-id (when idx
+                         (let ((idx-num (string-to-number idx)))
+                           (when (and (>= idx-num 0)
+                                      (< idx-num (length sig-exceptions)))
+                             (plist-get (seq-elt sig-exceptions idx-num)
+                                        :typeHandleIdentifier))))))
+         (if type-id
+             (list :type type :typeHandleIdentifier type-id)
+           (list :type type)))))
+    (_ nil)))
+
+(defun eglot-jdtls--change-signature-parse-buffer (buf method-id sig-exceptions)
+  "Parse the change signature edit buffer BUF.
+METHOD-ID is the method identifier.
+SIG-EXCEPTIONS are the original exceptions for type ID lookup.
+Returns a vector of refactoring parameters."
+  (with-current-buffer buf
+    (save-excursion
+      (goto-char (point-min))
+      (let (access-modifier return-type method-name
+            parameters exceptions is-delegate section)
+        ;; Parse each line until we hit the comment section
+        (cl-block parse-loop
+          (while (not (eobp))
+            (let ((line (thing-at-point 'line t)))
+              (when (string-prefix-p "---" line)
+                (cl-return-from parse-loop))
+              (cond
+               ((string-prefix-p "Access modifier: " line)
+                (setq access-modifier
+                      (string-trim (substring line (length "Access modifier: ")))))
+               ((string-prefix-p "Return type: " line)
+                (setq return-type
+                      (string-trim (substring line (length "Return type: ")))))
+               ((string-prefix-p "Method name: " line)
+                (setq method-name
+                      (string-trim (substring line (length "Method name: ")))))
+               ((string-prefix-p "IsDelegate: " line)
+                (setq is-delegate
+                      (string-trim (substring line (length "IsDelegate: ")))))
+               ((string-prefix-p "Parameters:" line)
+                (setq section 'parameters))
+               ((string-prefix-p "Exceptions:" line)
+                (setq section 'exception))
+               ((string-prefix-p "-" line)
+                (when-let ((item (eglot-jdtls--change-signature-parse-line-item
+                                  line section sig-exceptions)))
+                  (pcase section
+                    ('parameters (push item parameters))
+                    ('exception (push item exceptions)))))))
+            (forward-line)))
+        ;; Build result vector
+        (vector method-id
+                (if (equal is-delegate "true") t :json-false)
+                method-name
+                access-modifier
+                return-type
+                (vconcat (nreverse parameters))
+                (vconcat (nreverse exceptions))
+                :json-false)))))
+
+(defun eglot-jdtls--change-signature-send-request (server cmd params cmd-params
+                                                          on-success-window on-success-buffer)
+  "Send the change signature refactoring request to SERVER.
+CMD is the refactoring command name.
+PARAMS is the context parameters.
+CMD-PARAMS are the parsed command parameters from the edit buffer.
+ON-SUCCESS-WINDOW and ON-SUCCESS-BUFFER are the window and buffer to clean up on success."
+  (message "[eglot-jdtls] Sending async changeSignature request, it might take a few seconds to complete.")
+  (jsonrpc-async-request
+   server :java/getRefactorEdit
+   (list :command cmd
+         :context params
+         :options (eglot-jdtls--format-options)
+         :commandArguments cmd-params)
+   :success-fn
+   (lambda (result)
+     (let ((edit (plist-get result :edit)))
+       (when (or (plist-get edit :changes)
+                 (plist-get edit :documentChanges))
+         (eglot-jdtls--refactor-edit server result)
+         (when (window-live-p on-success-window)
+           (delete-window on-success-window))
+         (when (buffer-live-p on-success-buffer)
+           (kill-buffer on-success-buffer)))))
+   :error-fn
+   (lambda (err)
+     (message "[eglot-jdtls] Change signature failed: %s"
+              (plist-get err :message)))))
+
+(defun eglot-jdtls--change-signature-setup-buffer (buf lines sig-info server cmd params)
+  "Setup the change signature edit buffer BUF.
+LINES is the initial content.
+SIG-INFO contains the method signature information.
+SERVER, CMD, and PARAMS are needed for the refactoring request."
+  (let ((method-id (plist-get sig-info :methodIdentifier))
+        (exceptions (plist-get sig-info :exceptions)))
+    (with-current-buffer buf
+      (eglot-jdtls--change-signature-set-buffer-content buf lines)
+      ;; Set up keybindings
+      (local-set-key
+       (kbd "C-c C-c")
+       (lambda ()
+         (interactive)
+         (let ((cmd-params (eglot-jdtls--change-signature-parse-buffer
+                            buf method-id exceptions)))
+           (eglot-jdtls--change-signature-send-request
+            server cmd params cmd-params
+            (selected-window) (current-buffer)))))
+      (local-set-key
+       (kbd "C-c C-r")
+       (lambda ()
+         (interactive)
+         (eglot-jdtls--change-signature-set-buffer-content buf lines)))
+      (local-set-key
+       (kbd "C-c C-k")
+       (lambda ()
+         (interactive)
+         (kill-buffer-and-window))))))
 
 (defun eglot-jdtls--change-signature (server arguments)
   "Change method signature interactively using a dedicated edit buffer.
 
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list provided by the Java refactoring command."
-  (cl-block nil
-    (pcase-let*
-        ((`[,cmd ,params] arguments)
-         (sig-info (jsonrpc-request server :java/getChangeSignatureInfo params))
-         (err-msg (plist-get sig-info :errorMessage))
-         (_ (when err-msg
-              (message "%s" err-msg)
-              (cl-return)))
-         (edit-buf (get-buffer-create "*eglot-jdtls:Change Method Signature*")))
-      (cl-labels
-          ((send-change-signature
-            (cmd-params)
-            (let ((win (selected-window))
-                  (buf (current-buffer)))
-              (message "[eglot-jdtls] send async changeSignature request, it might take few seconds to complete.")
-              (jsonrpc-async-request
-               server :java/getRefactorEdit
-               (list :command cmd
-                     :context params
-                     :options (eglot-jdtls--format-options)
-                     :commandArguments cmd-params)
-               :success-fn
-               (lambda (result)
-                 (when-let* ((edit (plist-get result :edit))
-                             (doc-changes (plist-get edit :documentChanges)))
-                   (eglot-jdtls--refactor-edit server result)
-                   (when (window-live-p win)
-                     (delete-window win))
-                   (when (buffer-live-p buf)
-                     (kill-buffer buf)))))))
-           (label
-            (str)
-            (propertize
-             str
-             'read-only t 'face 'font-lock-keyword-face 'front-sticky t 'rear-nonsticky t))
-           (comments
-            (&rest strs)
-            (propertize
-             (mapconcat #'identity strs "\n")
-             'read-only t 'face 'font-lock-comment-face 'front-sticky t 'rear-nonsticky t))
-           (set-edit-buf-content
-            (buf lines)
-            (with-current-buffer buf
-              (let ((inhibit-read-only t))
-                (erase-buffer))
-              (dolist (line lines)
-                (insert line)
-                (newline))
-              (goto-char (point-min))))
-           (parse-buf
-            (buf method-id sig-exceptions)
-            (with-current-buffer buf
-              (save-excursion
-                (goto-char (point-min))
-                (let ((is-preview :json-false)
-                      access-modifier return-type method-name parameters
-                      exceptions is-delegate section)
-                  (cl-block nil
-                    (while (not (eobp))
-                      (let ((line (thing-at-point 'line t)))
-                        (when (string-prefix-p "---" line)
-                          (cl-return))
-                        (cond
-                         ((string-prefix-p "Access modifier: " line)
-                          (setq access-modifier (string-trim (substring line (length "Access modifier: ")))))
-                         ((string-prefix-p "Return type: " line)
-                          (setq return-type (string-trim (substring line (length "Return type: ")))))
-                         ((string-prefix-p "Method name: " line)
-                          (setq method-name (string-trim (substring line (length "Method name: ")))))
-                         ((string-prefix-p "IsDelegate: " line)
-                          (setq is-delegate (string-trim (substring line (length "IsDelegate: ")))))
-                         ((string-prefix-p "Parameters:" line)
-                          (setq section 'parameters))
-                         ((string-prefix-p "Exceptions:" line)
-                          (setq section 'exception))
-                         ((string-prefix-p "-" line)
-                          (pcase section
-                            ('parameters
-                             (when (string-match "\\-\\(?: \\([0-9]+\\):\\)? \\(\\S-+\\) \\(\\S-+\\)\\(?: \\(\\S-+\\)\\)?" line)
-                               (let ((idx (match-string 1 line))
-                                     (type (match-string 2 line))
-                                     (name (match-string 3 line))
-                                     (default-val (match-string 4 line)))
-                                 (push (list
-                                        :type type
-                                        :name name
-                                        :defaultValue (if idx "" (or default-val "null"))
-                                        :originalIndex (if idx (string-to-number idx) -1))
-                                       parameters))))
-                            ('exception
-                             (when (string-match "\\-\\(?: \\([0-9]+\\):\\)? \\(\\S-+\\)" line)
-                               (let* ((idx (match-string 1 line))
-                                      (type (match-string 2 line))
-                                      (type-id (when idx
-                                                 (let ((idx (string-to-number idx)))
-                                                   (when (and (> idx -1)
-                                                              (< idx (length sig-exceptions)))
-                                                     (plist-get (seq-elt sig-exceptions idx)
-                                                                :typeHandleIdentifier))))))
-                                 (push (if type-id
-                                           (list :type type :typeHandleIdentifier type-id)
-                                         (list :type type)) exceptions))))
-                            (_ nil))))
-                        (forward-line))))
-                  (vector method-id
-                          is-delegate
-                          method-name
-                          access-modifier
-                          return-type
-                          (vconcat (nreverse parameters))
-                          (vconcat (nreverse exceptions))
-                          is-preview))))))
-        (pcase-let*
-            (((map :methodIdentifier :modifier :returnType
-                   :methodName :parameters :exceptions) sig-info)
-             (lines `(,(concat (label "Access modifier: ") modifier)
-                      ,(concat (label "Return type: ") returnType)
-                      ,(concat (label "Method name: ") methodName)
-                      ,(label "Parameters:")
-                      ,@(cl-loop for param across parameters
-                                 for id from 0
-                                 collect
-                                 (pcase-let* (((map :type :name
-                                                    :defaultValue
-                                                    :originalIndex) param))
-                                   (format "- %d: %s %s"
-                                           originalIndex type name)))
-                      ,(label "Exceptions:")
-                      ,@(cl-loop for exception across exceptions
-                                 for id from 0
-                                 collect
-                                 (pcase-let* (((map :typeHandleIdentifier
-                                                    :type) exception))
-                                   (format "- %d: %s" id type)))
-                      ,(concat (label "IsDelegate: ") "false")
-                      ""
-                      ,(comments
-                        "---"
-                        "Labels are used to parse the values. Ensure they remain at the beginning of each line. "
-                        "Usage:"
-                        " - [C-c C-c] refactor"
-                        " - [C-c C-k] quit"
-                        " - [C-c C-r] reset"
-                        ""
-                        "Parameters:"
-                        " - Order sensitive"
-                        " - New param format: '- <type> <name> [defaultValue]'"
-                        " - Existing param format: '- <n>: <type> <name>'"
-                        " - <n> marks the original index, don't add it for new entries, don't change for moved params"
-                        ""
-                        "Exceptions:"
-                        " - Order insensitive"
-                        " - New exception format: '- <type>'"
-                        " - Existing exception format: '- <n>: <type>'"
-                        " - <n> marks the original type id, don't add it for new entries, don't change for moved exception"
-                        ""
-                        "Access modifier: ['public'|'protected'|'private'|'']"
-                        ""
-                        "IsDelegate: ['true'|'false']"
-                        " - Keep original method as delegate to changed method"
-                        "---"))))
-          (with-current-buffer edit-buf
-            (set-edit-buf-content edit-buf lines)
-            (local-set-key (kbd "C-c C-c")
-                           (lambda ()
-                             (interactive)
-                             (let ((cmd-params (parse-buf edit-buf
-                                                          methodIdentifier
-                                                          exceptions)))
-                               (send-change-signature cmd-params))))
-            (local-set-key (kbd "C-c C-r")
-                           (lambda ()
-                             (interactive)
-                             (set-edit-buf-content edit-buf lines)))
-            (local-set-key (kbd "C-c C-k")
-                           (lambda ()
-                             (interactive)
-                             (kill-buffer-and-window))))
-          (switch-to-buffer-other-window edit-buf))))))
+  (pcase-let* ((`[,cmd ,params] arguments)
+               (sig-info (jsonrpc-request server :java/getChangeSignatureInfo params)))
+    ;; Check for errors
+    (if-let ((err-msg (plist-get sig-info :errorMessage)))
+        (message "%s" err-msg)
+      ;; Build and display the edit buffer
+      (let* ((edit-buf (get-buffer-create eglot-jdtls--change-signature-buffer-name))
+             (lines (eglot-jdtls--change-signature-build-content sig-info)))
+        (eglot-jdtls--change-signature-setup-buffer
+         edit-buf lines sig-info server cmd params)
+        (switch-to-buffer-other-window edit-buf)))))
 
 (defun eglot-jdtls--resolve-scopes (scopes)
   "Resolve initialization scope from available SCOPES.
@@ -859,10 +944,9 @@ SCOPES is a list of scope identifiers."
 CMD is the refactoring command name (e.g., \"extractMethod\", \"extractVariable\",
 \"extractConstant\", \"extractField\").
 PARAMS is the context parameters for the refactoring operation.
-SERVER is the JDT Language Server instance (unused, server is obtained via
-eglot-current-server internally)."
+SERVER is the JDT Language Server instance."
   (let ((expressions (jsonrpc-request
-                      (eglot-current-server) :java/inferSelection
+                      server :java/inferSelection
                       (list :command cmd
                             :context params))))
     (pcase (length expressions)
@@ -1092,6 +1176,16 @@ Disables vertico-sort-function to preserve order for selection prompts."
      :context (:diagnostics []))
    :success-fn (lambda (result)
                  (eglot--apply-workspace-edit result this-command))))
+
+;;;###autoload
+(defun eglot-jdtls-clear-cache ()
+  "Clear the JDT source file cache."
+  (interactive)
+  (when (and (file-directory-p eglot-jdtls-cache-dir)
+             (yes-or-no-p (format "Delete cache directory %s? "
+                                  eglot-jdtls-cache-dir)))
+    (delete-directory eglot-jdtls-cache-dir t)
+    (message "Cache cleared.")))
 
 
 (provide 'eglot-jdtls)
