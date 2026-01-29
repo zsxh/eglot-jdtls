@@ -251,7 +251,7 @@ ARGUMENTS is the context information for where to add the override methods."
                                     :context argument))))
     (eglot--apply-workspace-edit add-methods-result this-command)))
 
-(defun eglot-jdlts--show-references (command arguments)
+(defun eglot-jdtls--show-references (command arguments)
   "Display Java references using Emacs xref interface.
 
 COMMAND is the JDT LS command name
@@ -1070,8 +1070,8 @@ Disables vertico-sort-function to preserve order for selection prompts."
       ("java.action.generateDelegateMethodsPrompt" (eglot-jdtls-generate-delegate-methods-prompt-support server arguments))
       ("java.action.applyRefactoringCommand" (eglot-jdtls--apply-refactoring-command server arguments))
       ("java.action.rename" (eglot-jdtls--rename arguments))
-      ("java.show.references" (eglot-jdlts--show-references command arguments))
-      ("java.show.implementations" (eglot-jdlts--show-references command arguments))
+      ("java.show.references" (eglot-jdtls--show-references command arguments))
+      ("java.show.implementations" (eglot-jdtls--show-references command arguments))
       (_ (cl-call-next-method)))))
 
 ;;;###autoload
