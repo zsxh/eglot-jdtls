@@ -224,7 +224,7 @@
        (eglot--collecting-xrefs (collect)
          (mapc
           (lambda (ref)
-            (eglot--dbind ((Location) uri range) ref
+            (pcase-let* (((map :uri :range) ref))
               (collect (eglot--xref-make-match "" uri range))))
           refs))
        nil)
@@ -232,7 +232,7 @@
 
 (defun eglot-jdtls--rename (arguments)
   "Execute Java rename action using Eglot LSP."
-  (eglot--dbind (uri offset length) (seq-elt arguments 0)
+  (pcase-let* (((map :uri :offset :length) (seq-elt arguments 0)))
     (with-current-buffer (find-file (eglot-uri-to-path uri))
       (deactivate-mark)
       (goto-char (1+ offset))
