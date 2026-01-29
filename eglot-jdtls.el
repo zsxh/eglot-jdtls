@@ -50,6 +50,17 @@
 
 ;; Variables
 
+(defcustom eglot-jdtls-cache-dir
+  (expand-file-name "eglot-java" (temporary-file-directory))
+  "Directory to cache Java source files from jdt:// URIs."
+  :type 'directory
+  :group 'eglot-jdtls)
+
+(defcustom eglot-jdtls-crm-separator "[ \t]*;[ \t]*"
+  "Separator for `completing-read-multiple' in Java code actions."
+  :type 'string
+  :group 'eglot-jdtls)
+
 (defcustom eglot-jdtls-config nil
   "JDTLS server config for eglot."
   :type '(plist :key-type (restricted-sexp
@@ -58,32 +69,27 @@
                 :value-type sexp)
   :group 'eglot-jdtls)
 
-(defcustom eglot-jdtls-cache-dir
-  (expand-file-name "eglot-java" (temporary-file-directory))
-  "Directory to cache Java source files from jdt:// URIs."
-  :type 'directory
-  :group 'eglot-jdtls)
-
 (defvar eglot-jdtls--default-config
   '(:cmd ("jdtls")
     :settings nil
     :init-options (:bundles []
-                   :extendedClientCapabilities (:classFileContentsSupport t
-                                                :overrideMethodsPromptSupport t
-                                                :hashCodeEqualsPromptSupport t
-                                                :executeClientCommandSupport t
-                                                :advancedOrganizeImportsSupport t
-                                                :generateConstructorsPromptSupport t
-                                                :generateToStringPromptSupport t
-                                                :advancedGenerateAccessorsSupport t
-                                                :generateDelegateMethodsPromptSupport t
-                                                :advancedExtractRefactoringSupport t
-                                                :inferSelectionSupport ["extractMethod"
-                                                                        "extractVariable"
-                                                                        "extractField"]
-                                                :moveRefactoringSupport t
-                                                :extractInterfaceSupport t
-                                                :advancedIntroduceParameterRefactoringSupport t)))
+                   :extendedClientCapabilities
+                   (:classFileContentsSupport t
+                    :overrideMethodsPromptSupport t
+                    :hashCodeEqualsPromptSupport t
+                    :executeClientCommandSupport t
+                    :advancedOrganizeImportsSupport t
+                    :generateConstructorsPromptSupport t
+                    :generateToStringPromptSupport t
+                    :advancedGenerateAccessorsSupport t
+                    :generateDelegateMethodsPromptSupport t
+                    :advancedExtractRefactoringSupport t
+                    :inferSelectionSupport ["extractMethod"
+                                            "extractVariable"
+                                            "extractField"]
+                    :moveRefactoringSupport t
+                    :extractInterfaceSupport t
+                    :advancedIntroduceParameterRefactoringSupport t)))
   "JDTLS server default config for eglot.")
 
 ;; Eglot jdtls config
@@ -119,16 +125,19 @@
 
 ;; CodeAction / Commands
 
-(defun eglot-jdtls---select (items prompt display-item-fn
-                                   &optional multiple-p separator)
+(defun eglot-jdtls--select (items prompt display-item-fn
+                                  &optional multiple-p transform-fn)
   ""
   (let* ((cands (mapcar
                  (lambda (item)
                    (cons (funcall display-item-fn item) item))
                  items))
          (item-fn (lambda (choice)
-                    (alist-get choice cands nil nil 'equal)))
-         (crm-separator (or separator crm-separator)))
+                    (let ((item (alist-get choice cands nil nil 'equal)))
+                      (if transform-fn
+                          (funcall transform-fn item)
+                        item))))
+         (crm-separator (or eglot-jdtls-crm-separator crm-separator)))
     (if multiple-p
         (cl-map 'vector
                 item-fn
@@ -196,24 +205,23 @@
   (let* ((argument (seq-elt arguments 0))
          (list-methods-result (jsonrpc-request server :java/listOverridableMethods argument))
          (methods (plist-get list-methods-result :methods))
-         (menu-items (mapcar
-                      (lambda (method)
-                        (let* ((name (plist-get method :name))
-                               (parameters (plist-get method :parameters))
-                               (class (plist-get method :declaringClass)))
-                          (cons (format "%s(%s): %s" name (string-join parameters ", ") class) method)))
-                      methods))
-         ;; use ";" instead of "," to separate strings in completing-read-multiple
-         (crm-separator "[ \t]*;[ \t]*")
-         (selected-methods (cl-map
-                            'vector
-                            (lambda (choice) (alist-get choice menu-items nil nil 'equal))
-                            (delete-dups
-                             (completing-read-multiple "Select methods: " menu-items))))
+         (selected-methods (eglot-jdtls--select
+                            methods
+                            "Select methods: "
+                            (lambda (method)
+                              (pcase-let* (((map :name
+                                                 :parameters
+                                                 :declaringClass) method))
+                                (format "%s(%s): %s"
+                                        name
+                                        (mapconcat #'identity parameters ", ")
+                                        class)))
+                            t))
          (add-methods-result (jsonrpc-request
                               server
                               :java/addOverridableMethods
-                              (list :overridableMethods selected-methods :context argument))))
+                              (list :overridableMethods selected-methods
+                                    :context argument))))
     (eglot--apply-workspace-edit add-methods-result this-command)))
 
 (defun eglot-jdlts--show-references (command arguments)
@@ -245,142 +253,137 @@
 
 (defun eglot-jdtls--generate-toString-prompt (server arguments)
   "Prompt user to generate toString method for Java class using Eglot LSP."
-  (let* ((context (seq-elt arguments 0))
-         (check-resp (jsonrpc-request server :java/checkToStringStatus context)))
-    (eglot--dbind (fields exists) check-resp
-      (when (or (eq exists :json-false) (y-or-n-p "The toString() method already exists. Replace?"))
-        (let* ((menu-items (mapcar (lambda (field)
-                                     (let ((name (plist-get field :name))
-                                           (type (plist-get field :type)))
-                                       (cons (format "%s: %s" name type) field)))
-                                   fields))
-               ;; use ";" instead of "," to separate strings in completing-read-multiple
-               (crm-separator "[ \t]*;[ \t]*")
-               (selected-items (cl-map 'vector
-                                       (lambda (choice) (alist-get choice menu-items nil nil 'equal))
-                                       (delete-dups
-                                        (completing-read-multiple "Select fields to include: " menu-items))))
-               (generate-result (jsonrpc-request server :java/generateToString (list :fields selected-items :context context))))
-          (eglot--apply-workspace-edit generate-result this-command))))))
+  (pcase-let* ((params (seq-elt arguments 0))
+               (check-resp (jsonrpc-request
+                            server :java/checkToStringStatus
+                            params))
+               ((map :fields :exists) check-resp))
+    (when (or (eq exists :json-false)
+              (y-or-n-p "The toString() method already exists. Replace?"))
+      (let* ((selected-fields (eglot-jdtls--select
+                               fields
+                               "Select fields to include: "
+                               (lambda (field)
+                                 (pcase-let* (((map :name :type) field))
+                                   (format "%s: %s" name type)))
+                               t))
+             (generate-result (jsonrpc-request
+                               server :java/generateToString
+                               (list :fields selected-fields
+                                     :context params))))
+        (eglot--apply-workspace-edit generate-result this-command)))))
 
 (defun eglot-jdtls--hashCode-equals-prompt (server arguments)
   "Prompt user to generate hashCode and equals methods for Java class using Eglot LSP."
-  (let* ((context (seq-elt arguments 0))
-         (check-resp (jsonrpc-request server :java/checkHashCodeEqualsStatus context)))
-    (eglot--dbind (fields existingMethods) check-resp
-      (when (or (seq-empty-p existingMethods)
-                (y-or-n-p (format "The %s method already exists. Replace?" existingMethods)))
-        (let* ((menu-items (mapcar (lambda (field)
-                                     (let ((name (plist-get field :name))
-                                           (type (plist-get field :type)))
-                                       (cons (format "%s: %s" name type) field)))
-                                   fields))
-               ;; use ";" instead of "," to separate strings in completing-read-multiple
-               (crm-separator "[ \t]*;[ \t]*")
-               (selected-items (cl-map 'vector
-                                       (lambda (choice) (alist-get choice menu-items nil nil 'equal))
-                                       (delete-dups
-                                        (completing-read-multiple "Select fields to include: " menu-items))))
-               (generate-result (jsonrpc-request server :java/generateHashCodeEquals
-                                                (list
-                                                 :fields selected-items
-                                                 :context context
-                                                 :regenerate (not (seq-empty-p existingMethods))))))
-          (eglot--apply-workspace-edit generate-result this-command))))))
+  (pcase-let* ((params (seq-elt arguments 0))
+               (check-resp (jsonrpc-request
+                            server :java/checkHashCodeEqualsStatus
+                            params))
+               ((map :fields :existingMethods) check-resp))
+    (when (or (seq-empty-p existingMethods)
+              (y-or-n-p (format "The %s method already exists. Replace?"
+                                existingMethods)))
+      (let* ((selected-fields (eglot-jdtls--select
+                               fields
+                               "Select fields to include: "
+                               (lambda (field)
+                                 (pcase-let* (((map :name :type) field))
+                                   (format "%s: %s" name type)))
+                               t))
+             (generate-result (jsonrpc-request
+                               server :java/generateHashCodeEquals
+                               (list
+                                :fields selected-fields
+                                :context params
+                                :regenerate (not (seq-empty-p existingMethods))))))
+        (eglot--apply-workspace-edit generate-result this-command)))))
 
 (defun java-action-generateAccessorsPrompt (server arguments)
   "Prompt user to generate accessor methods for Java fields using Eglot LSP."
-  (let* ((context (seq-elt arguments 0))
-         (accessorFields (jsonrpc-request server :java/resolveUnimplementedAccessors context))
-         (menu-items (mapcar (lambda (accessorField)
-                               (let ((field (plist-get accessorField :fieldName))
-                                     (type (plist-get accessorField :typeName)))
-                                 (cons (format "%s: %s" field type) accessorField)))
-                             accessorFields))
-         ;; use ";" instead of "," to separate strings in completing-read-multiple
-         (crm-separator "[ \t]*;[ \t]*")
-         (selected-items (cl-map 'vector
-                                 (lambda (choice) (alist-get choice menu-items nil nil 'equal))
-                                 (delete-dups
-                                  (completing-read-multiple "Select fields to generate: " menu-items))))
-         (generate-result (jsonrpc-request server :java/generateAccessors (list :accessors selected-items :context context))))
+  (let* ((params (seq-elt arguments 0))
+         (accessorFields (jsonrpc-request
+                          server :java/resolveUnimplementedAccessors
+                          params))
+         (selected-accessors (eglot-jdtls--select
+                              accessorFields
+                              "Select fields to generate: "
+                              (lambda (field)
+                                (pcase-let* (((map :fieldName :typeName) field))
+                                  (format "%s: %s" fieldName typeName)))
+                              t))
+         (generate-result (jsonrpc-request
+                           server :java/generateAccessors
+                           (list :accessors selected-accessors
+                                 :context params))))
     (eglot--apply-workspace-edit generate-result this-command)))
 
 (defun java-action-generateConstructorsPrompt (server arguments)
   "Prompt user to generate constructors for Java classes using Eglot LSP."
-  (let* ((context (seq-elt arguments 0))
-         (check-resp (jsonrpc-request server :java/checkConstructorsStatus context))
-         (constructors (plist-get check-resp :constructors))
-         (fields (plist-get check-resp :fields))
-         ;; use ";" instead of "," to separate strings in completing-read-multiple
-         (crm-separator "[ \t]*;[ \t]*")
-         (constructor-items (mapcar (lambda (item)
-                                      (let ((name (plist-get item :name))
-                                            (parameters (plist-get item :parameters)))
-                                        (cons (format "%s(%s)" name (mapconcat #'identity parameters ", ")) item)))
-                                    constructors))
-         (selected-constructors (cl-map 'vector
-                                        (lambda (choice) (alist-get choice constructor-items nil nil 'equal))
-                                        (delete-dups
-                                         (completing-read-multiple "Select constructors to generate: " constructor-items))))
-         (field-items (mapcar (lambda (item)
-                                (let ((name (plist-get item :name))
-                                      (type (plist-get item :type)))
-                                  (cons (format "%s: %s" name type) item)))
-                              fields))
-         (selected-fields (cl-map 'vector
-                                  (lambda (choice) (alist-get choice field-items nil nil 'equal))
-                                  (delete-dups
-                                   (completing-read-multiple "Select fields to generate: " field-items))))
-         (generate-result (jsonrpc-request server :java/generateConstructors
-                                          (list :context context
-                                                :constructors selected-constructors
-                                                :fields selected-fields))))
+  (pcase-let* ((params (seq-elt arguments 0))
+               (check-resp (jsonrpc-request
+                            server :java/checkConstructorsStatus
+                            params))
+               ((map :constructors :fields) check-resp)
+               (selected-constructors (eglot-jdtls--select
+                                       constructors
+                                       "Select constructors to generate: "
+                                       (lambda (constructor)
+                                         (pcase-let* (((map :name :parameters) field))
+                                           (format "%s(%s)" name (mapconcat #'identity parameters ", "))))
+                                       t))
+               (selected-fields (eglot-jdtls--select
+                                 fields
+                                 "Select fields to generate: "
+                                 (lambda (field)
+                                   (pcase-let* (((map :name :type) field))
+                                     (format "%s: %s" name type)))
+                                 t))
+               (generate-result (jsonrpc-request server :java/generateConstructors
+                                                 (list :context params
+                                                       :constructors selected-constructors
+                                                       :fields selected-fields))))
     (eglot--apply-workspace-edit generate-result this-command)))
 
 (defun java-action-generateDelegateMethodsPromptSupport (server arguments)
   "Prompt user to generate delegate methods for Java fields using Eglot LSP."
-  (let* ((context (seq-elt arguments 0))
-         (check-resp (jsonrpc-request server :java/checkDelegateMethodsStatus context))
-         (delegate-fields (plist-get check-resp :delegateFields))
-         ;; use ";" instead of "," to separate strings in completing-read-multiple
-         (crm-separator "[ \t]*;[ \t]*")
-         (field-items (mapcar (lambda (item)
-                                (let* ((field (plist-get item :field))
-                                       (name (plist-get field :name))
-                                       (type (plist-get field :type)))
-                                  (cons (format "%s: %s" name type) item)))
-                              delegate-fields))
-         (selected-field-key (completing-read "Select target to generate delegates for:" field-items))
-         (selected-field-item (alist-get selected-field-key field-items nil nil 'equal))
-         (field (plist-get selected-field-item :field))
-         (field-name (plist-get field :name))
-         (delegate-methods (plist-get selected-field-item :delegateMethods))
-         (delegate-method-items (mapcar (lambda (item)
-                                          (let* ((name (plist-get item :name))
-                                                 (parameters (plist-get item :parameters)))
-                                            (cons (format "%s.%s(%s)" field-name name
-                                                          (mapconcat #'identity parameters ", "))
-                                                  item)))
-                                        delegate-methods))
-         (selected-delegate-methods
-          (cl-map 'vector
-                  (lambda (choice)
-                    (let* ((method (alist-get choice delegate-method-items nil nil 'equal)))
-                      (list :field field :delegateMethod method)))
-                  (delete-dups
-                   (completing-read-multiple
-                    "Select methods to generate delegates for:" delegate-method-items))))
-         (generate-result (jsonrpc-request server :java/generateDelegateMethods
-                                          (list :context context
-                                                :delegateEntries selected-delegate-methods))))
+  (pcase-let*
+      ((params (seq-elt arguments 0))
+       (check-resp (jsonrpc-request
+                    server :java/checkDelegateMethodsStatus params))
+       (delegate-fields (plist-get check-resp :delegateFields))
+       (selected-field (eglot-jdtls--select
+                        delegate-fields
+                        "Select target to generate delegates for: "
+                        (lambda (item)
+                          (pcase-let*
+                              ((field (plist-get item :field))
+                               ((map :name :type) field))
+                            (format "%s: %s" name type)))))
+       (field (plist-get selected-field :field))
+       (field-name (plist-get field :name))
+       (delegate-methods (plist-get selected-field-item :delegateMethods))
+       (selected-methods (eglot-jdtls--select
+                          delegate-methods
+                          "Select methods to generate delegates for: "
+                          (lambda (method)
+                            (pcase-let*
+                                (((map :name :parameters) method))
+                              (format
+                               "%s.%s(%s)" field-name name
+                               (mapconcat #'identity parameters ", "))))
+                          t
+                          (lambda (method)
+                            (list :field field :delegateMethod method))))
+       (generate-result (jsonrpc-request
+                         server :java/generateDelegateMethods
+                         (list :context params
+                               :delegateEntries selected-methods))))
     (eglot--apply-workspace-edit generate-result this-command)))
 
 (defun eglot-jdtls--refactor-edit (server refactor-edit)
   ""
-  (let ((edit (plist-get refactor-edit :edit))
-        (command (plist-get refactor-edit :command))
-        (err (plist-get refactor-edit :errorMessage)))
+  (pcase-let*
+      (((map :edit :command (:errorMessage err)) refactor-edit))
     (when err
       (message "%s" err))
     (when edit
@@ -391,12 +394,12 @@
 (defun eglot-jdtls--move-file (server arguments)
   ""
   (cl-block nil
-    (let* ((ctx (seq-elt arguments 1))
-           (uris (vector (plist-get (seq-elt arguments 2) :uri)))
-           (move-dest-resp (jsonrpc-request server :java/getMoveDestinations
-                                           (list :moveKind "moveResource"
-                                                 :sourceUris uris
-                                                 :params nil)))
+    (let* ((uris (vector (plist-get (seq-elt arguments 2) :uri)))
+           (move-dest-resp (jsonrpc-request
+                            server :java/getMoveDestinations
+                            (list :moveKind "moveResource"
+                                  :sourceUris uris
+                                  :params nil)))
            (err-msg (plist-get move-dest-resp :errorMessage))
            (_ (when err-msg
                 (message "%s" err-msg)
@@ -407,7 +410,7 @@
                            (length> destinations 0))
                 (message "Cannot find available Java packages to move the selected files to.")
                 (cl-return)))
-           (destination (eglot-jdtls---select
+           (destination (eglot-jdtls--select
                          destinations
                          (format "Choose the target package for %s: "
                                  (file-name-nondirectory (buffer-file-name)))
@@ -441,17 +444,16 @@
                            (length> destinations 0))
                 (message "Cannot find available Java packages to move the selected files to")
                 (cl-return)))
-           (destination (eglot-jdtls---select
+           (destination (eglot-jdtls--select
                          destinations
                          (format
                           "Select the new class for the instance method %s: "
-                          (or (plist-get (seq-elt arguments 2) :displayName) ""))
+                          (or (plist-get (seq-elt arguments 2) :displayName)
+                              ""))
                          (lambda (item)
-                           (let ((name (plist-get item :name))
-                                 (type (plist-get item :type))
-                                 (is-field (plist-get item :isField)))
+                           (pcase-let* (((map :name :type :isField) item))
                              (format "%s %s %s"
-                                     (if (eq is-field :json-false)
+                                     (if (eq isField :json-false)
                                          "[Method Parameter]"
                                        "[Field]           ")
                                      type name)))))
@@ -480,7 +482,7 @@
                                 (not (member name excludes))))
                             symbols)))
     (when (length> filtered-symbols 0)
-      (eglot-jdtls---select filtered-symbols prompt
+      (eglot-jdtls--select filtered-symbols prompt
                             (lambda (item)
                               (pcase-let* (((map :name :containerName) item))
                                 (format "%s %s" name containerName)))))))
@@ -535,7 +537,7 @@
          (_ (when (length= kinds 0)
               (message "No available destination kinds")
               (cl-return)))
-         (kind (eglot-jdtls---select
+         (kind (eglot-jdtls--select
                 kinds "What would you like to do?"
                 (lambda (item)
                   (pcase item
@@ -581,7 +583,7 @@
             (let ((win (selected-window))
                   (buf (current-buffer)))
               (message "[eglot-jdtls] send async changeSignature request, it might take few seconds to complete.")
-              (eglot--async-request
+              (jsonrpc-async-request
                server :java/getRefactorEdit
                (list :command cmd
                      :context params
@@ -764,7 +766,7 @@
     (pcase (length expressions)
       (0 nil)
       (1 (seq-elt expressions 0))
-      (_ (eglot-jdtls---select
+      (_ (eglot-jdtls--select
           expressions
           (format "extract to %s:"
                   (pcase cmd
@@ -782,31 +784,37 @@
   (cl-block nil
     (pcase-let*
         ((`[,cmd ,params] arguments)
-         (check-resp (jsonrpc-request server :java/checkExtractInterfaceStatus params))
+         (check-resp (jsonrpc-request
+                      server :java/checkExtractInterfaceStatus
+                      params))
          (_ (unless check-resp (cl-return)))
          ((map :members :subTypeName :destinationResponse) check-resp)
          (destinations (plist-get destinationResponse :destinations))
          (_ (unless (and members (vectorp members) (length> members 0))
               (message "Cannot find available members to declare in the interface")
               (cl-return)))
-         (_ (unless (and destinations (vectorp destinations) (length> destinations 0))
+         (_ (unless (and destinations
+                         (vectorp destinations)
+                         (length> destinations 0))
               (message "Cannot find available Java packages to extract interface to")
               (cl-return)))
-         (members (eglot-jdtls---select
-                   members
-                   "Select members: "
-                   (lambda (m)
-                     (pcase-let* (((map :name :typeName :parameters) m)
-                                  (params-str (mapconcat #'identity parameters ", ")))
-                       (format "%s(%s) %s" name params-str typeName)))
-                   t
-                   "[ \t]*;[ \t]*"))
-         (_ (unless members (cl-return)))
-         (member-ids (vconcat (mapcar (lambda (x) (plist-get x :handleIdentifier)) members)))
+         (member-ids (eglot-jdtls--select
+                      members
+                      "Select members: "
+                      (lambda (m)
+                        (pcase-let*
+                            (((map :name :typeName :parameters) m)
+                             (params-str (mapconcat #'identity parameters ", ")))
+                          (format "%s(%s) %s" name params-str typeName)))
+                      t
+                      (lambda (m)
+                        (plist-get m :handleIdentifier))))
+         (_ (unless member-ids (cl-return)))
          (interface-name (read-string "Specify interface name: " subTypeName))
-         (_ (unless (and interface-name (not (string-empty-p interface-name)))
+         (_ (unless (and interface-name
+                         (not (string-empty-p interface-name)))
               (cl-return)))
-         (destination (eglot-jdtls---select
+         (destination (eglot-jdtls--select
                        destinations
                        (format "Specify package: ")
                        (lambda (item)
@@ -911,20 +919,17 @@
    &key command arguments &allow-other-keys)
   (pcase command
     ("java.action.organizeImports.chooseImports"
-     (let* ((documentUri (seq-elt arguments 0)) ; string - 文档 URI
-            (selections (seq-elt arguments 1)) ; ImportSelection[] - 导入冲突列表
-            (restoreExistingImports (seq-elt arguments 2)) ; boolean - 是否保留现有导入
-            (select-candidate-fn
-             (eglot--lambda (candidates range)
-               (eglot--goto range)
-               (let* ((menu-items (mapcar
-                                   (lambda (cand)
-                                     (let ((fullyQualifiedName (plist-get cand :fullyQualifiedName)))
-                                       (cons fullyQualifiedName cand)))
-                                   candidates))
-                      (selected-item-key (completing-read "Select class to import: " menu-items))
-                      (selected-item (alist-get selected-item-key menu-items nil nil 'equal)))
-                 selected-item))))
+     (pcase-let*
+         ((`[,documentUri ,selections _restoreExistingImports] arguments)
+          (select-candidate-fn (lambda (selection)
+                                 (pcase-let* (((map :candidates :range) selection))
+                                   (eglot--goto range)
+                                   (let* ((selected-item (eglot-jdtls--select
+                                                          candidates
+                                                          "Select class to import: "
+                                                          (lambda (cand)
+                                                            (plist-get cand :fullyQualifiedName)))))
+                                     selected-item)))))
        (with-current-buffer (find-file (eglot-uri-to-path documentUri))
          (save-excursion
            (cl-map 'vector select-candidate-fn selections)))))
@@ -951,13 +956,11 @@
       ("java.show.implementations" (eglot-jdlts--show-references command arguments))
       (_ (cl-call-next-method)))))
 
-;; Interactive commands
-
 ;;;###autoload
 (defun eglot-jdtls-organize-imports ()
   "Organize imports in the current Java buffer using Eglot LSP."
   (interactive)
-  (eglot--async-request
+  (jsonrpc-async-request
    (eglot--current-server-or-lose)
    :java/organizeImports
    `(:textDocument (:uri ,(eglot-path-to-uri (buffer-file-name) :truenamep t))
@@ -965,8 +968,7 @@
              :end (:line 0 :character 0))
      :context (:diagnostics []))
    :success-fn (lambda (result)
-                 (eglot--apply-workspace-edit result this-command))
-   :hint :java/organizeImports))
+                 (eglot--apply-workspace-edit result this-command))))
 
 
 (provide 'eglot-jdtls)
