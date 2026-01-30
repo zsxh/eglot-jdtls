@@ -127,8 +127,8 @@
      ((functionp cmd)
       (funcall cmd))
      ((listp cmd)
-      (let ((program (car cmd))
-            (exec (executable-find program)))
+      (let* ((program (car cmd))
+             (exec (executable-find program)))
         (unless exec
           (user-error "[eglot-jdtls] can not find executable cmd"))
         (cons exec (cdr cmd))))
@@ -537,15 +537,15 @@ converting it to a static method in the target class.
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list containing the move operation context from JDT LS
 command, with parameters at index 1 and display info at index 2."
-  (let* ((params (seq-elt arguments 1))
-         (uris (vector (plist-get (plist-get params :textDocument) :uri)))
-         (move-dest-resp (jsonrpc-request
-                          server :java/getMoveDestinations
-                          (list :moveKind "moveInstanceMethod"
-                                :sourceUris uris
-                                :params params)))
-         ((map (:errorMessage err-msg)
-               :destinations) move-dest-resp))
+  (pcase-let* ((params (seq-elt arguments 1))
+               (uris (vector (plist-get (plist-get params :textDocument) :uri)))
+               (move-dest-resp (jsonrpc-request
+                                server :java/getMoveDestinations
+                                (list :moveKind "moveInstanceMethod"
+                                      :sourceUris uris
+                                      :params params)))
+               ((map (:errorMessage err-msg)
+                     :destinations) move-dest-resp))
     (cond
      (err-msg (message "%s" err-msg))
      ((not (and (vectorp destinations) (length> destinations 0)))
