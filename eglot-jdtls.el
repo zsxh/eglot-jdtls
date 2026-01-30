@@ -499,39 +499,34 @@ REFACTOR-EDIT is a map containing the refactoring result with:
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list containing the move operation context from JDT LS
 command, with the file URI at index 2."
-  (cl-block nil
-    (let* ((uris (vector (plist-get (seq-elt arguments 2) :uri)))
-           (move-dest-resp (jsonrpc-request
-                            server :java/getMoveDestinations
-                            (list :moveKind "moveResource"
-                                  :sourceUris uris
-                                  :params nil)))
-           (err-msg (plist-get move-dest-resp :errorMessage))
-           (_ (when err-msg
-                (message "%s" err-msg)
-                (cl-return)))
-           (destinations (plist-get move-dest-resp :destinations))
-           (_ (unless (and destinations
-                           (vectorp destinations)
-                           (length> destinations 0))
-                (message "Cannot find available Java packages to move the selected files to.")
-                (cl-return)))
-           (destination (eglot-jdtls--select
-                         destinations
-                         (format "Choose the target package for %s: "
-                                 (file-name-nondirectory (buffer-file-name)))
-                         (lambda (item)
-                           (let ((display-name (plist-get item :displayName))
-                                 (path (plist-get item :path)))
-                             (format "%s - %s" display-name path)))))
-           (result (jsonrpc-request
-                    server :java/move
-                    (list :moveKind "moveResource"
-                          :sourceUris uris
-                          :params nil
-                          :destination destination
-                          :updateReferences t))))
-      (eglot-jdtls--refactor-edit server result))))
+  (pcase-let* ((uris (vector (plist-get (seq-elt arguments 2) :uri)))
+               (move-dest-resp (jsonrpc-request
+                                server :java/getMoveDestinations
+                                (list :moveKind "moveResource"
+                                      :sourceUris uris
+                                      :params nil)))
+               ((map (:errorMessage err-msg)
+                     :destinations) move-dest-resp))
+    (cond
+     (err-msg (message "%s" err-msg))
+     ((not (and (vectorp destinations) (length> destinations 0)))
+      (message "Cannot find available Java packages to move the selected files to."))
+     (t (let* ((destination (eglot-jdtls--select
+                             destinations
+                             (format "Choose the target package for %s: "
+                                     (file-name-nondirectory (buffer-file-name)))
+                             (lambda (item)
+                               (format "%s - %s"
+                                       (plist-get item :displayName)
+                                       (plist-get item :path)))))
+               (result (jsonrpc-request
+                        server :java/move
+                        (list :moveKind "moveResource"
+                              :sourceUris uris
+                              :params nil
+                              :destination destination
+                              :updateReferences t))))
+          (eglot-jdtls--refactor-edit server result))))))
 
 (defun eglot-jdtls--instant-method (server arguments)
   "Move an instance method to a different class (field or method parameter).
@@ -542,43 +537,41 @@ converting it to a static method in the target class.
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list containing the move operation context from JDT LS
 command, with parameters at index 1 and display info at index 2."
-  (cl-block nil
-    (let* ((params (seq-elt arguments 1))
-           (uris (vector (plist-get (plist-get params :textDocument) :uri)))
-           (move-dest-resp (jsonrpc-request
-                            server :java/getMoveDestinations
-                            (list :moveKind "moveInstanceMethod"
-                                  :sourceUris uris
-                                  :params params)))
-           (err-msg (plist-get move-dest-resp :errorMessage))
-           (_ (when err-msg (message "%s" err-msg) (cl-return)))
-           (destinations (plist-get move-dest-resp :destinations))
-           (_ (unless (and destinations
-                           (vectorp destinations)
-                           (length> destinations 0))
-                (message "Cannot find available Java packages to move the selected files to")
-                (cl-return)))
-           (destination (eglot-jdtls--select
-                         destinations
-                         (format
-                          "Select the new class for the instance method %s: "
-                          (or (plist-get (seq-elt arguments 2) :displayName)
-                              ""))
-                         (lambda (item)
-                           (pcase-let* (((map :name :type
-                                           (:isField is-field)) item))
-                             (format "%s %s %s"
-                                     (if (eq is-field :json-false)
-                                         "[Method Parameter]"
-                                       "[Field]           ")
-                                     type name)))))
-           (result (jsonrpc-request server :java/move
-                                    (list :moveKind "moveInstanceMethod"
-                                          :sourceUris uris
-                                          :params params
-                                          :destination destination
-                                          :updateReferences t))))
-      (eglot-jdtls--refactor-edit server result))))
+  (let* ((params (seq-elt arguments 1))
+         (uris (vector (plist-get (plist-get params :textDocument) :uri)))
+         (move-dest-resp (jsonrpc-request
+                          server :java/getMoveDestinations
+                          (list :moveKind "moveInstanceMethod"
+                                :sourceUris uris
+                                :params params)))
+         ((map (:errorMessage err-msg)
+               :destinations) move-dest-resp))
+    (cond
+     (err-msg (message "%s" err-msg))
+     ((not (and (vectorp destinations) (length> destinations 0)))
+      (message "Cannot find available Java packages to move the selected files to"))
+     (t
+      (let* ((display-name (or (plist-get (seq-elt arguments 2) :displayName) ""))
+             (destination (eglot-jdtls--select
+                           destinations
+                           (format
+                            "Select the new class for the instance method %s: "
+                            display-name)
+                           (lambda (item)
+                             (pcase-let*
+                                 (((map :name :type (:isField is-field)) item))
+                               (format "%s %s %s"
+                                       (if (eq is-field :json-false)
+                                           "[Method Parameter]"
+                                         "[Field]           ")
+                                       type name)))))
+             (result (jsonrpc-request server :java/move
+                                      (list :moveKind "moveInstanceMethod"
+                                            :sourceUris uris
+                                            :params params
+                                            :destination destination
+                                            :updateReferences t))))
+        (eglot-jdtls--refactor-edit server result))))))
 
 (defun eglot-jdtls--select-target-class (server prompt project-name excludes)
   "Select a target class from symbols in PROJECT-NAME.
@@ -614,88 +607,81 @@ EXCLUDES is a list of fully-qualified class names to exclude from selection."
 
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list provided by the Java refactoring command."
-  (cl-block nil
-    (pcase-let*
-        ((`[_cmd ,params ,cmd-info] arguments)
-         (uris (vector (plist-get (plist-get params :textDocument) :uri)))
-         ((map
-           (:displayName display-name "")
-           (:projectName project-name "")
-           (:enclosingTypeName type-name)
-           :memberType) cmd-info)
-         (excludes (when type-name
-                     (if (memq memberType
-                               (list eglot-jdtls--symbol-kind-type
-                                     eglot-jdtls--symbol-kind-enum
-                                     eglot-jdtls--symbol-kind-annotation))
-                         (list type-name
-                               (format "%s.%s"
-                                       type-name
-                                       display-name))
-                       (list type-name))))
-         (target-class (eglot-jdtls--select-target-class
-                        server
-                        (format
-                         "Select the new class for the static member %s: "
-                         display-name)
-                        project-name
-                        excludes))
-         (_ (unless target-class
-              (message "No destination found")
-              (cl-return)))
-         (result (jsonrpc-request server :java/move
-                                 (list :moveKind "moveStaticMember"
-                                       :sourceUris uris
-                                       :params params
-                                       :destination target-class))))
-      (eglot-jdtls--refactor-edit server result))))
+  (pcase-let*
+      ((`[_cmd ,params ,cmd-info] arguments)
+       (uris (vector (plist-get (plist-get params :textDocument) :uri)))
+       ((map (:displayName display-name "")
+             (:projectName project-name "")
+             (:enclosingTypeName type-name)
+             :memberType) cmd-info)
+       (excludes (when type-name
+                   (if (memq memberType
+                             (list eglot-jdtls--symbol-kind-type
+                                   eglot-jdtls--symbol-kind-enum
+                                   eglot-jdtls--symbol-kind-annotation))
+                       (list type-name (format "%s.%s" type-name display-name))
+                     (list type-name))))
+       (target-class (eglot-jdtls--select-target-class
+                      server
+                      (format "Select the new class for the static member %s: "
+                              display-name)
+                      project-name
+                      excludes)))
+    (if target-class
+        (let ((result (jsonrpc-request
+                       server :java/move
+                       (list :moveKind "moveStaticMember"
+                             :sourceUris uris
+                             :params params
+                             :destination target-class))))
+          (eglot-jdtls--refactor-edit server result))
+      (message "No destination found"))))
 
 (defun eglot-jdtls--move-type (server arguments)
   "Move a type (class, interface, enum, or annotation type) to another location.
 
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list provided by the Java refactoring command."
-  (cl-block nil
-    (pcase-let*
-        ((`[_cmd ,params ,cmd-info] arguments)
-         (uris (vector (plist-get (plist-get params :textDocument) :uri)))
-         ((map
-           (:displayName display-name "")
-           (:projectName project-name "")
-           (:supportedDestinationKinds kinds)
-           (:enclosingTypeName type-name)) cmd-info)
-         (_ (when (length= kinds 0)
-              (message "No available destination kinds")
-              (cl-return)))
-         (kind (eglot-jdtls--select
-                kinds
-                "What would you like to do?"
-                (lambda (item)
-                  (pcase item
-                    ("newFile" (format "Move type %s to new file" display-name))
-                    (_ (format "Move type %s to another class" display-name))))))
-         (move-type-params
-          (pcase kind
-            ("newFile" (list :moveKind "moveTypeToNewFile"
-                             :sourceUris uris
-                             :params params))
-            (_ (let* ((excludes (when type-name
-                                  (list type-name
-                                        (format "%s.%s" type-name
-                                                display-name))))
-                      (target-class (eglot-jdtls--select-target-class
-                                     server
-                                     (format
-                                      "Select the new class for the type %s: "
-                                      display-name)
-                                     project-name
-                                     excludes)))
-                 (list :moveKind "moveTypeToClass"
-                       :sourceUris uris
-                       :params params
-                       :destination target-class)))))
-         (result (jsonrpc-request server :java/move move-type-params)))
-      (eglot-jdtls--refactor-edit server result))))
+  (pcase-let*
+      ((`[_cmd ,params ,cmd-info] arguments)
+       (uris (vector (plist-get (plist-get params :textDocument) :uri)))
+       ((map
+         (:displayName display-name "")
+         (:projectName project-name "")
+         (:supportedDestinationKinds kinds)
+         (:enclosingTypeName type-name)) cmd-info))
+    (if (length= kinds 0)
+        (message "No available destination kinds")
+      (let* ((kind (eglot-jdtls--select
+                    kinds
+                    "What would you like to do?"
+                    (lambda (item)
+                      (pcase item
+                        ("newFile" (format "Move type %s to new file" display-name))
+                        (_ (format "Move type %s to another class" display-name))))))
+             (move-type-params
+              (pcase kind
+                ("newFile" (list :moveKind "moveTypeToNewFile"
+                                 :sourceUris uris
+                                 :params params))
+                (_ (let* ((excludes (when type-name
+                                      (list type-name
+                                            (format "%s.%s" type-name
+                                                    display-name))))
+                          (target-class (eglot-jdtls--select-target-class
+                                         server
+                                         (format
+                                          "Select the new class for the type %s: "
+                                          display-name)
+                                         project-name
+                                         excludes)))
+                     (list :moveKind "moveTypeToClass"
+                           :sourceUris uris
+                           :params params
+                           :destination target-class)))))
+             (result (jsonrpc-request server :java/move move-type-params)))
+        (eglot-jdtls--refactor-edit server result)))))
+
 (defun eglot-jdtls--change-signature-make-label (str)
   "Create a read-only label from STR for the change signature buffer."
   (propertize str
@@ -835,8 +821,8 @@ Returns a vector of refactoring parameters."
                ((string-prefix-p "Exceptions:" line)
                 (setq section 'exception))
                ((string-prefix-p "-" line)
-                (when-let ((item (eglot-jdtls--change-signature-parse-line-item
-                                  line section sig-exceptions)))
+                (when-let* ((item (eglot-jdtls--change-signature-parse-line-item
+                                   line section sig-exceptions)))
                   (pcase section
                     ('parameters (push item parameters))
                     ('exception (push item exceptions)))))))
@@ -918,7 +904,7 @@ ARGUMENTS is a list provided by the Java refactoring command."
   (pcase-let* ((`[,cmd ,params] arguments)
                (sig-info (jsonrpc-request server :java/getChangeSignatureInfo params)))
     ;; Check for errors
-    (if-let ((err-msg (plist-get sig-info :errorMessage)))
+    (if-let* ((err-msg (plist-get sig-info :errorMessage)))
         (message "%s" err-msg)
       ;; Build and display the edit buffer
       (let* ((edit-buf (get-buffer-create eglot-jdtls--change-signature-buffer-name))
@@ -970,66 +956,54 @@ SERVER is the JDT Language Server instance."
 
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list provided by the Java refactoring command."
-  (cl-block nil
-    (pcase-let*
-        ((`[,cmd ,params] arguments)
-         (check-resp (jsonrpc-request
-                      server :java/checkExtractInterfaceStatus
-                      params))
-         (_ (unless check-resp (cl-return)))
-         ((map :members :subTypeName :destinationResponse) check-resp)
-         (destinations (plist-get destinationResponse :destinations))
-         (_ (unless (and members (vectorp members) (length> members 0))
-              (message "Cannot find available members to declare in the interface")
-              (cl-return)))
-         (_ (unless (and destinations
-                         (vectorp destinations)
-                         (length> destinations 0))
-              (message "Cannot find available Java packages to extract interface to")
-              (cl-return)))
-         (member-ids (eglot-jdtls--select
-                      members
-                      "Select members: "
-                      (lambda (m)
-                        (pcase-let*
-                            (((map :name :typeName :parameters) m)
-                             (params-str (mapconcat #'identity parameters ", ")))
-                          (format "%s(%s) %s" name params-str typeName)))
-                      t
-                      (lambda (m)
-                        (plist-get m :handleIdentifier))))
-         (_ (unless member-ids (cl-return)))
-         (interface-name (read-string "Specify interface name: " subTypeName))
-         (_ (unless (and interface-name
-                         (not (string-empty-p interface-name)))
-              (cl-return)))
-         (destination (eglot-jdtls--select
-                       destinations
-                       (format "Specify package: ")
-                       (lambda (item)
-                         (let ((display-name (plist-get item :displayName))
-                               (path (plist-get item :path)))
-                           (format "%s - %s" display-name path)))))
-         (_ (unless destination (cl-return)))
-         (cmd-args (vector member-ids interface-name destination))
-         (result (jsonrpc-request
-                  server :java/getRefactorEdit
-                  (list :command cmd
-                        :commandArguments (vconcat cmd-args)
-                        :context params
-                        :options (eglot-jdtls--format-options)))))
+  (pcase-let*
+      ((`[,cmd ,params] arguments)
+       (check-resp (jsonrpc-request
+                    server :java/checkExtractInterfaceStatus
+                    params))
+       ((map :members :subTypeName :destinationResponse) check-resp))
+    (when-let* ((destinations (plist-get destinationResponse :destinations))
+                (_ (or (and (vectorp members) (length> members 0))
+                       (ignore (message "Cannot find available members to declare in the interface"))))
+                (_ (or (and (vectorp destinations) (length> destinations 0))
+                       (ignore (message "Cannot find available Java packages to extract interface to"))))
+                (member-ids (eglot-jdtls--select
+                             members
+                             "Select members: "
+                             (lambda (m)
+                               (pcase-let*
+                                   (((map :name :typeName :parameters) m)
+                                    (params-str (mapconcat #'identity parameters ", ")))
+                                 (format "%s(%s) %s" name params-str typeName)))
+                             t
+                             (lambda (m)
+                               (plist-get m :handleIdentifier))))
+                (interface-name (read-string "Specify interface name: " subTypeName))
+                (_ (and interface-name (not (string-empty-p interface-name))))
+                (destination (eglot-jdtls--select
+                              destinations
+                              (format "Specify package: ")
+                              (lambda (item)
+                                (format "%s - %s"
+                                        (plist-get item :displayName)
+                                        (plist-get item :path)))))
+                (cmd-args (vector member-ids interface-name destination))
+                (result (jsonrpc-request
+                         server :java/getRefactorEdit
+                         (list :command cmd
+                               :commandArguments (vconcat cmd-args)
+                               :context params
+                               :options (eglot-jdtls--format-options)))))
       (eglot-jdtls--refactor-edit server result)
-      (when-let* ((edit (plist-get result :edit))
-                  (doc-changes (plist-get edit :documentChanges)))
-        (mapc
-         (lambda (doc-change)
-           (when-let* ((kind (plist-get doc-change :kind))
-                       (_ (equal kind "create"))
-                       (uri (plist-get doc-change :uri))
-                       (file (eglot-uri-to-path uri))
-                       (_ (file-exists-p file)))
-             (find-file-other-window file)))
-         doc-changes)))))
+      (pcase-let* (((map :edit) result)
+                   ((map :documentChanges) edit))
+        (dolist (doc-change (append documentChanges nil))
+          (when-let* ((kind (plist-get doc-change :kind))
+                      (_ (equal kind "create"))
+                      (uri (plist-get doc-change :uri))
+                      (file (eglot-uri-to-path uri))
+                      (_ (file-exists-p file)))
+            (find-file-other-window file)))))))
 
 (defun eglot-jdtls--apply-refactoring-command (server arguments)
   "Apply Java refactoring command by dispatching to appropriate handler.
