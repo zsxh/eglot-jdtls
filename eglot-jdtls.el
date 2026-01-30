@@ -24,7 +24,7 @@
 ;; You should have received a copy of the GNU General Public License
 ;; along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-;;; Commentary:
+;; Commentary:
 ;;
 ;; eglot-jdtls provides integration between Eglot and the Eclipse JDT Language Server.
 ;; It enables advanced Java language features including code generation, refactoring,
@@ -47,22 +47,23 @@
 ;;
 ;;   (setq eglot-jdtls-config
 ;;         '(:cmd ("jdtls"
-;;                 "--jvm-arg=-javaagent:/path/to/lombok.jar" ;; Adding Lombok support
-;;                 "--jvm-arg=-XX:+UseStringDeduplication" ;; Other jvm arg
-;;                 )
-;;           ;; JDTLS JavaConfigurationSettings
-;;           ;; https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
-;;           :settings (:java
-;;                       (:configuration
-;;                         (:runtimes [(:name "JavaSE-1.8"
-;;                                     :path "/path/to/JDK_8_HOME")
-;;                                     (:name "JavaSE-17"
-;;                                     :path "/path/to/JDK_17_HOME")
-;;                                     (:name "JavaSE-21"
-;;                                     :path "/path/to/JDK_21_HOME"
-;;                                     :default t)])))
+;;                 "--jvm-arg=-javaagent:/path/to/lombok.jar"
+;;                 "--jvm-arg=-XX:+UseStringDeduplication")
 ;;           :init-options (:bundles ["/path/to/java-debug.jar"
 ;;                                   "/path/to/java-test.jar"])))
+;;
+;;   ;; JDTLS JavaConfigurationSettings
+;;   ;; https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
+;;   (setq-default eglot-workspace-configuration
+;;                 '(:java
+;;                   (:configuration
+;;                   (:runtimes [(:name "JavaSE-1.8"
+;;                                 :path "/path/to/JDK_8_HOME")
+;;                               (:name "JavaSE-17"
+;;                                 :path "/path/to/JDK_17_HOME")
+;;                               (:name "JavaSE-21"
+;;                                 :path "/path/to/JDK_21_HOME"
+;;                                 :default t)]))))
 ;;
 ;; Configuration Options
 ;; ---------------------
@@ -70,7 +71,6 @@
 ;; * `eglot-jdtls-crm-separator' - Separator for multiple selections in code actions
 ;; * `eglot-jdtls-config' - JDTLS server configuration plist
 ;;   - :cmd - JDTLS command (list or function returning list)
-;;   - :settings - LSP settings to send to server
 ;;   - :init-options - Initialization options including extendedClientCapabilities and bundles
 ;;
 ;; Extended Client Capabilities
@@ -201,7 +201,6 @@
 
 (defvar eglot-jdtls--default-config
   '(:cmd ("jdtls")
-    :settings nil
     :init-options (:bundles []
                    :extendedClientCapabilities
                    (:classFileContentsSupport t
@@ -265,12 +264,8 @@ Each argument should be a property list.  Returns a new plist."
   "Return initialization options for JDT LS SERVER."
   (let* ((user-init (plist-get eglot-jdtls-config :init-options))
          (default-init (plist-get eglot-jdtls--default-config :init-options))
-         (init-options (eglot-jdtls--plist-merge default-init user-init))
-         (user-settings (plist-get eglot-jdtls-config :settings))
-         (default-settings (plist-get eglot-jdtls--default-config :settings))
-         (settings (eglot-jdtls--plist-merge default-settings user-settings)))
+         (init-options (eglot-jdtls--plist-merge default-init user-init)))
     (list
-     :settings settings
      :extendedClientCapabilities (plist-get init-options
                                             :extendedClientCapabilities)
      :bundles (plist-get init-options :bundles))))
@@ -374,8 +369,7 @@ Unrecognized operations are forwarded to the default file handlers."
 (add-to-list 'file-name-handler-alist '("\\`jdt://" . eglot-jdtls-uri-handler))
 
 (defun eglot-jdtls--apply-workspaceEdit (arguments)
-  "Apply workspace edit(s) ARGUMENTS from JDT LS command
-`java.apply.workspaceEdit'."
+  "Apply workspace edit(s) ARGUMENTS from JDT LS command `java.apply.workspaceEdit'."
   (mapc (lambda (edit)
           (eglot--apply-workspace-edit edit this-command))
         arguments))
@@ -1072,8 +1066,7 @@ SERVER is the JDT Language Server instance."
             (plist-get expression :name)))))))
 
 (defun eglot-jdtls--extract-interface (server arguments)
-  "Extract an interface from a class by selecting members and
-specifying destination.
+  "Extract an interface from a class by selecting members and specifying destination.
 
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list provided by the Java refactoring command."

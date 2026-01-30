@@ -82,19 +82,21 @@ For custom JDTLS initialization (e.g., Lombok support, multiple JDKs):
       '(:cmd ("jdtls"
               "--jvm-arg=-javaagent:/path/to/lombok.jar"
               "--jvm-arg=-XX:+UseStringDeduplication")
-        ;; JDTLS JavaConfigurationSettings
-        ;; https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
-        :settings (:java
-                    (:configuration
-                      (:runtimes [(:name "JavaSE-1.8"
-                                  :path "/path/to/JDK_8_HOME")
-                                  (:name "JavaSE-17"
-                                  :path "/path/to/JDK_17_HOME")
-                                  (:name "JavaSE-21"
-                                  :path "/path/to/JDK_21_HOME"
-                                  :default t)])))
         :init-options (:bundles ["/path/to/java-debug.jar"
                                 "/path/to/java-test.jar"])))
+
+;; JDTLS JavaConfigurationSettings
+;; https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
+(setq-default eglot-workspace-configuration
+              '(:java
+                (:configuration
+                 (:runtimes [(:name "JavaSE-1.8"
+                              :path "/path/to/JDK_8_HOME")
+                             (:name "JavaSE-17"
+                              :path "/path/to/JDK_17_HOME")
+                             (:name "JavaSE-21"
+                              :path "/path/to/JDK_21_HOME"
+                              :default t)]))))
 ```
 
 ### Configuration Options
@@ -107,7 +109,6 @@ For custom JDTLS initialization (e.g., Lombok support, multiple JDKs):
 
 The `eglot-jdtls-config` plist supports:
 - `:cmd` - JDTLS command (list or function returning list)
-- `:settings` - LSP settings to send to server
 - `:init-options` - Initialization options including `extendedClientCapabilities` and `bundles`
 
 ## Usage
