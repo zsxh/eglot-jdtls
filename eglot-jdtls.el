@@ -1,4 +1,4 @@
-;;; eglot-jdtls.el ---   -*- lexical-binding: t; -*-
+;;; eglot-jdtls.el --- Eclipse JDT Language Server integration with Eglot -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  zsxh
 
@@ -7,7 +7,7 @@
 ;; URL: https://github.com/zsxh/eglot-jdtls
 ;; Version: 0.0.1
 ;; Package-Requires: ((emacs "30.1") (compat "30.1.0.0") (eglot "1.17.30") (jsonrpc "1.0.24"))
-;; Keywords: eglot jdtls
+;; Keywords: eglot, tools
 
 ;; This file is not part of GNU Emacs.
 
@@ -26,7 +26,123 @@
 
 ;;; Commentary:
 ;;
+;; eglot-jdtls provides integration between Eglot and the Eclipse JDT Language Server.
+;; It enables advanced Java language features including code generation, refactoring,
+;; and navigation through Eglot's LSP client interface.
 ;;
+;; Installation
+;; ------------
+;; Put this file in your load path and require it:
+;;
+;;   (require 'eglot-jdtls)
+;;
+;; Basic Configuration
+;; ------------------
+;; The simplest configuration uses the default jdtls command:
+;;
+;;   (push '((java-mode java-ts-mode) . (eglot-jdtls-server . eglot-jdtls-cmd))
+;;         eglot-server-programs)
+;;
+;; For custom JDTLS initialization, configure `eglot-jdtls-config':
+;;
+;;   (setq eglot-jdtls-config
+;;         '(:cmd ("jdtls"
+;;                 "--jvm-arg=-javaagent:/path/to/lombok.jar" ;; Adding Lombok support
+;;                 "--jvm-arg=-XX:+UseStringDeduplication" ;; Other jvm arg
+;;                 )
+;;           ;; JDTLS JavaConfigurationSettings
+;;           ;; https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
+;;           :settings (:java
+;;                       (:configuration
+;;                         (:runtimes [(:name "JavaSE-1.8"
+;;                                     :path "/path/to/JDK_8_HOME")
+;;                                     (:name "JavaSE-17"
+;;                                     :path "/path/to/JDK_17_HOME")
+;;                                     (:name "JavaSE-21"
+;;                                     :path "/path/to/JDK_21_HOME"
+;;                                     :default t)])))
+;;           :init-options (:bundles ["/path/to/java-debug.jar"
+;;                                   "/path/to/java-test.jar"])))
+;;
+;; Configuration Options
+;; ---------------------
+;; * `eglot-jdtls-cache-dir' - Directory for caching JAR source files (default: ~/.emacs.d/eglot-jdtls)
+;; * `eglot-jdtls-crm-separator' - Separator for multiple selections in code actions
+;; * `eglot-jdtls-config' - JDTLS server configuration plist
+;;   - :cmd - JDTLS command (list or function returning list)
+;;   - :settings - LSP settings to send to server
+;;   - :init-options - Initialization options including extendedClientCapabilities and bundles
+;;
+;; Extended Client Capabilities
+;; ----------------------------
+;; The package enables advanced JDTLS features by default:
+;; - Class file contents support (decompile from JARs)
+;; - Override/hashCode/equals/toString generation prompts
+;; - Advanced import organization
+;; - Constructor/accessor/delegate method generation
+;; - Advanced refactoring (extract, move, change signature)
+;; - Infer selection for code actions
+;;
+;; Key Features
+;; ------------
+;;
+;; **Code Generation**
+;; Generate common Java patterns via code actions:
+;; - Override Methods: Prompts to select methods from superclass/interfaces
+;; - Generate toString(): Select fields to include
+;; - Generate hashCode() & equals(): Select fields for comparison
+;; - Generate Getters & Setters: Select fields to generate accessors for
+;; - Generate Constructors: Select constructors and fields to initialize
+;; - Generate Delegate Methods: Create wrapper methods delegating to field methods
+;;
+;; **Refactoring**
+;; Advanced refactoring operations:
+;; - Move File: Move .java files between packages
+;; - Move Instance Method: Move method to a field's type or parameter's type
+;; - Move Static Member: Move static fields/methods/types to other classes
+;; - Move Type: Move nested types to new files or other classes
+;; - Extract Interface: Create interface from selected class members
+;; - Change Signature: Interactive buffer for modifying method parameters,
+;;   return types, exceptions, and access modifiers (C-c C-c to apply)
+;; - Extract Method/Variable/Constant/Field: Infer selection and extract
+;; - Introduce Parameter: Convert local variable to method parameter
+;; - Convert Anonymous to Nested: Convert anonymous class to named nested class
+;;
+;; **Navigation**
+;; - Jump to definitions in JAR files (automatic decompilation via jdt:// URIs)
+;; - Find references and implementations
+;;
+;; Available Commands
+;; ------------------
+;; * `eglot-jdtls-organize-imports' - Organize and optimize imports in current buffer
+;; * `eglot-jdtls-clear-cache' - Clear the cached decompiled Java source files
+;;
+;; URI Handler
+;; -----------
+;; The package handles jdt:// URIs automatically, fetching and caching
+;; decompiled source files from the JDT Language Server.  This enables
+;; navigation into JAR file contents and JDK sources.
+;;
+;; Customization Examples
+;; ----------------------
+;; **Custom format options**
+;;   The package respects `tab-width' and `indent-tabs-mode' for refactoring.
+;;   Set these before executing refactoring commands.
+;;
+;; Integration with Vertico
+;; ------------------------
+;; The package temporarily disables `vertico-sort-function' for code action
+;; selections to preserve the order returned by JDTLS, ensuring consistent
+;; and predictable completion candidates.
+;;
+;; Troubleshooting
+;; ---------------
+;; - If JDTLS fails to start, ensure the jdtls command is in your PATH
+;;   or provide the full path in `eglot-jdtls-config'
+;; - For class file navigation issues, try `eglot-jdtls-clear-cache'
+;; - Check JDTLS logs with `M-x eglot-events-buffer'
+;; - Ensure your Java project has proper build configuration (Maven/Gradle)
+;;   for accurate code completion and navigation
 ;;
 
 ;;; Code:
@@ -137,7 +253,7 @@
 
 (defun eglot-jdtls--plist-merge (&rest plists)
   "Merge multiple PLISTS into one, with later values overriding earlier ones.
-Each argument should be a property list. Returns a new plist."
+Each argument should be a property list.  Returns a new plist."
   (let ((result nil))
     (dolist (plist plists)
       (while plist
@@ -145,7 +261,7 @@ Each argument should be a property list. Returns a new plist."
         (setq plist (cddr plist))))
     result))
 
-(cl-defmethod eglot-initialization-options ((server eglot-jdtls-server))
+(cl-defmethod eglot-initialization-options ((_server eglot-jdtls-server))
   "Return initialization options for JDT LS SERVER."
   (let* ((user-init (plist-get eglot-jdtls-config :init-options))
          (default-init (plist-get eglot-jdtls--default-config :init-options))
@@ -197,7 +313,7 @@ before returning them."
 (defun eglot-jdtls--find-jdt-server ()
   "Find the active JDT Language Server for the current project."
   (let ((filter-fn (lambda (server)
-                     (cl-loop for (mode . languageid) in
+                     (cl-loop for (_mode . languageid) in
                               (eglot--languages server)
                               when (string= languageid "java")
                               return languageid)))
@@ -258,7 +374,8 @@ Unrecognized operations are forwarded to the default file handlers."
 (add-to-list 'file-name-handler-alist '("\\`jdt://" . eglot-jdtls-uri-handler))
 
 (defun eglot-jdtls--apply-workspaceEdit (arguments)
-  "Apply workspace edit(s) from JDT LS command `java.apply.workspaceEdit'."
+  "Apply workspace edit(s) ARGUMENTS from JDT LS command
+`java.apply.workspaceEdit'."
   (mapc (lambda (edit)
           (eglot--apply-workspace-edit edit this-command))
         arguments))
@@ -336,7 +453,7 @@ ARGUMENTS is a list containing context information for the class."
                             params))
                ((map :fields :exists) check-resp))
     (when (or (eq exists :json-false)
-              (y-or-n-p "The toString() method already exists. Replace?"))
+              (y-or-n-p "The toString() method already exists.  Replace?"))
       (let* ((selected-fields (eglot-jdtls--select
                                fields
                                "Select fields to include: "
@@ -361,7 +478,7 @@ ARGUMENTS is a list containing context information for the class."
                             params))
                ((map :fields :existingMethods) check-resp))
     (when (or (seq-empty-p existingMethods)
-              (y-or-n-p (format "The %s method already exists. Replace?"
+              (y-or-n-p (format "The %s method already exists.  Replace?"
                                 existingMethods)))
       (let* ((selected-fields (eglot-jdtls--select
                                fields
@@ -838,13 +955,16 @@ Returns a vector of refactoring parameters."
                 :json-false)))))
 
 (defun eglot-jdtls--change-signature-send-request (server cmd params cmd-params
-                                                          on-success-window on-success-buffer)
+                                                          on-success-window
+                                                          on-success-buffer)
   "Send the change signature refactoring request to SERVER.
 CMD is the refactoring command name.
 PARAMS is the context parameters.
 CMD-PARAMS are the parsed command parameters from the edit buffer.
-ON-SUCCESS-WINDOW and ON-SUCCESS-BUFFER are the window and buffer to clean up on success."
-  (message "[eglot-jdtls] Sending async changeSignature request, it might take a few seconds to complete.")
+ON-SUCCESS-WINDOW and ON-SUCCESS-BUFFER are the window and buffer
+to clean up on success."
+  (message "[eglot-jdtls] Sending async changeSignature request, \
+it might take a few seconds to complete.")
   (jsonrpc-async-request
    server :java/getRefactorEdit
    (list :command cmd
@@ -952,7 +1072,8 @@ SERVER is the JDT Language Server instance."
             (plist-get expression :name)))))))
 
 (defun eglot-jdtls--extract-interface (server arguments)
-  "Extract an interface from a class by selecting members and specifying destination.
+  "Extract an interface from a class by selecting members and
+specifying destination.
 
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list provided by the Java refactoring command."
@@ -1088,7 +1209,7 @@ ARGUMENTS is a list provided by the Java refactoring command."
   "Handle workspace/executeClientCommand requests from JDT Language Server.
 
 _SERVER is the JDT Language Server instance.
-_METHOD is always 'workspace/executeClientCommand' (via method specialization).
+_METHOD is always `workspace/executeClientCommand' (via method specialization).
 COMMAND is the client command name to execute.
 ARGUMENTS is a keyword argument containing the command arguments."
   (pcase command
