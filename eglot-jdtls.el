@@ -24,7 +24,7 @@
 ;; You should have received a copy of the GNU General Public License
 ;; along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-;; Commentary:
+;;; Commentary:
 ;;
 ;; eglot-jdtls provides integration between Eglot and the Eclipse JDT Language Server.
 ;; It enables advanced Java language features including code generation, refactoring,
