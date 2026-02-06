@@ -40,6 +40,7 @@ This package provides seamless integration between Eglot (the Emacs LSP client) 
 - Emacs 30.1 or later
 - [Eglot](https://github.com/joaotavora/eglot) 1.17.30 or later
 - [Eclipse JDT Language Server](https://github.com/eclipse-jdtls/eclipse.jdt.ls) (jdtls)
+- [eglot-codelens](https://github.com/zsxh/eglot-codelens) (optional)
 
 ## Installation
 
@@ -48,7 +49,7 @@ This package provides seamless integration between Eglot (the Emacs LSP client) 
 ```emacs-lisp
 (unless (package-installed-p 'eglot-jdtls)
   (package-vc-install
-   '(eglot-codelens :url "https://github.com/zsxh/eglot-jdtls")))
+   '(eglot-jdtls :url "https://github.com/zsxh/eglot-jdtls")))
 ```
 
 ### Manual Installation
@@ -72,6 +73,8 @@ The simplest configuration uses the default `jdtls` command:
 (push '((java-mode java-ts-mode) . (eglot-jdtls-server . eglot-jdtls-cmd))
         eglot-server-programs)
 ```
+
+Then enable `eglot` in Java buffers with `M-x eglot`.
 
 ### Advanced Configuration
 
