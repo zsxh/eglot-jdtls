@@ -208,7 +208,7 @@ See [LICENSE](LICENSE) for details.
 
 ## Author
 
-**zsxh** <[bnbvbchen@gmail.com](mailto:bnbvbchen@gmail.com)>
+**Zsxh Chen** <[bnbvbchen@gmail.com](mailto:bnbvbchen@gmail.com)>
 
 ## Links
 

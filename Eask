@@ -1,7 +1,7 @@
 ;; -*- mode: eask; lexical-binding: t -*-
 
 (package "eglot-jdtls"
-         "0.0.1"
+         "0.1.0"
          "Eclipse JDT Language Server integration with Eglot")
 
 (website-url "https://github.com/zsxh/eglot-jdtls")

@@ -1,11 +1,11 @@
 ;;; eglot-jdtls.el --- Eclipse JDT Language Server integration with Eglot -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2026  zsxh
+;; Copyright (C) 2026  Zsxh Chen
 
-;; Author: zsxh <bnbvbchen@gmail.com>
-;; Maintainer: zsxh <bnbvbchen@gmail.com>
+;; Author: Zsxh Chen <bnbvbchen@gmail.com>
+;; Maintainer: Zsxh Chen <bnbvbchen@gmail.com>
 ;; URL: https://github.com/zsxh/eglot-jdtls
-;; Version: 0.0.1
+;; Version: 0.1.0
 ;; Package-Requires: ((emacs "30.1") (compat "30.1.0.0") (eglot "1.17.30") (jsonrpc "1.0.24"))
 ;; Keywords: eglot, tools
 
@@ -334,13 +334,18 @@ Supported operations:
 Unrecognized operations are forwarded to the default file handlers."
   (let* ((uri (car args))
          (cache-dir eglot-jdtls-cache-dir)
-         (_ (unless (string-match "jdt://contents/\\([^/]+\\)/\\(.*\\)\\.class\\?" uri)
+         (_ (unless (string-match "jdt://contents/\\([^/]+\\)/\\(.+\\)\\.\\([^.]+\\)\\?" uri)
               (error "Invalid JDT URI format: %s" uri)))
          (jar-file (substring uri (match-beginning 1) (match-end 1)))
-         (java-file (format "%s.java" (replace-regexp-in-string "/" "." (substring uri (match-beginning 2) (match-end 2)) t t)))
+         (jar-class-name (replace-regexp-in-string "/" "." (substring uri (match-beginning 2) (match-end 2)) t t))
+         (jar-class-ext (substring uri (match-beginning 3) (match-end 3)))
+         (jar-class-file (format "%s.%s" jar-class-name
+                                 (if (string-equal jar-class-ext "class")
+                                     "java"
+                                   jar-class-ext)))
          (jar-dir (concat (file-name-as-directory cache-dir)
                           (file-name-as-directory jar-file)))
-         (source-file (expand-file-name (concat jar-dir java-file))))
+         (source-file (expand-file-name (concat jar-dir jar-class-file))))
     (unless (file-readable-p source-file)
       (let* ((server (or (eglot-current-server)
                          ;; NOTE: dape https://github.com/svaante/dape/issues/78#issuecomment-1966786597
@@ -350,7 +355,7 @@ Unrecognized operations are forwarded to the default file handlers."
              (content (jsonrpc-request
                        server :java/classFileContents (list :uri uri))))
         (unless content
-          (error "No java class content"))
+          (error "No class file contents found"))
         (unless (file-directory-p jar-dir) (make-directory jar-dir t))
         (with-temp-file source-file (insert content))))
     (cond
@@ -369,7 +374,8 @@ Unrecognized operations are forwarded to the default file handlers."
 (add-to-list 'file-name-handler-alist '("\\`jdt://" . eglot-jdtls-uri-handler))
 
 (defun eglot-jdtls--apply-workspaceEdit (arguments)
-  "Apply workspace edit(s) ARGUMENTS from JDT LS command `java.apply.workspaceEdit'."
+  "Apply workspace edit(s) ARGUMENTS from JDT LS command.
+Command is `java.apply.workspaceEdit'."
   (mapc (lambda (edit)
           (eglot--apply-workspace-edit edit this-command))
         arguments))
@@ -1066,7 +1072,7 @@ SERVER is the JDT Language Server instance."
             (plist-get expression :name)))))))
 
 (defun eglot-jdtls--extract-interface (server arguments)
-  "Extract an interface from a class by selecting members and specifying destination.
+  "Extract an interface from a class by selecting members and destination.
 
 SERVER is the JDT Language Server instance.
 ARGUMENTS is a list provided by the Java refactoring command."
