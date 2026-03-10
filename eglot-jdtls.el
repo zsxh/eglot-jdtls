@@ -173,6 +173,7 @@
   :prefix "eglot-jdtls-"
   :link '(url-link :tag "GitHub" "https://github.com/zsxh/eglot-jdtls"))
 
+;;;###autoload
 (defclass eglot-jdtls-server (eglot-lsp-server)
   ()
   :documentation "eclipse's jdt langserver."
@@ -1047,8 +1048,8 @@ SCOPES is a list of scope identifiers."
 (defun eglot-jdtls--get-expression (cmd params server)
   "Infer and select an expression for refactoring operations.
 
-CMD is the refactoring command name (e.g., \"extractMethod\", \"extractVariable\",
-\"extractConstant\", \"extractField\").
+CMD is the refactoring command name (e.g., \"extractMethod\",
+\"extractVariable\", \"extractConstant\", \"extractField\").
 PARAMS is the context parameters for the refactoring operation.
 SERVER is the JDT Language Server instance."
   (let ((expressions (jsonrpc-request
