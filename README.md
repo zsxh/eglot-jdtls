@@ -4,7 +4,7 @@
 
 **Eclipse JDT Language Server integration with Eglot**
 
-This package provides seamless integration between Eglot (the Emacs LSP client) and the Eclipse JDT Language Server, enabling advanced Java language features including code generation, refactoring, and navigation.
+This package provides seamless integration between Eglot (the Emacs LSP client) and the Eclipse JDT Language Server, enabling advanced Java language features including code generation, refactoring, debugging, testing, and navigation.
 
 ## Features
 
@@ -26,6 +26,15 @@ This package provides seamless integration between Eglot (the Emacs LSP client) 
   - Introduce parameters
   - Convert anonymous classes to nested classes
 
+- **Debugging** (requires [dape](https://github.com/svaante/dape) and [java-debug](https://github.com/Microsoft/java-debug) bundle)
+  - Run and debug Java programs via [dape](https://github.com/svaante/dape)
+  - Hot code replace in running debug sessions
+  - Run/Debug CodeLenses on `main` methods
+
+- **Testing** (requires [dape](https://github.com/svaante/dape) and [java-test](https://github.com/microsoft/vscode-java-test) bundle)
+  - Run and debug JUnit 4/5/6 and TestNG tests
+  - Run/Debug CodeLenses on test methods (requires [eglot-codelens](https://github.com/zsxh/eglot-codelens))
+
 - **Navigation**
   - Jump to definitions in JAR files with automatic decompilation
   - Find references and implementations
@@ -38,9 +47,11 @@ This package provides seamless integration between Eglot (the Emacs LSP client) 
 ## Requirements
 
 - Emacs 30.1 or later
-- [Eglot](https://github.com/joaotavora/eglot) 1.17.30 or later
+- [Eglot](https://github.com/joaotavora/eglot) 1.23 or later
 - [Eclipse JDT Language Server](https://github.com/eclipse-jdtls/eclipse.jdt.ls) (jdtls)
-- [eglot-codelens](https://github.com/zsxh/eglot-codelens) (optional)
+- [dape](https://github.com/svaante/dape) 0.26.0 or later (for debugging and testing)
+- [eglot-codelens](https://github.com/zsxh/eglot-codelens) (optional, for Run/Debug CodeLenses)
+- [dape-toolbar](https://github.com/zsxh/dape-toolbar) (optional, dape toolbar)
 
 ## Installation
 
@@ -78,15 +89,14 @@ Then enable `eglot` in Java buffers with `M-x eglot`.
 
 ### Advanced Configuration
 
-For custom JDTLS initialization (e.g., Lombok support, multiple JDKs):
+For custom JDTLS initialization (e.g., Lombok support, multiple JDKs, debugging, testing):
 
 ```emacs-lisp
 (setq eglot-jdtls-config
       '(:cmd ("jdtls"
               "--jvm-arg=-javaagent:/path/to/lombok.jar"
               "--jvm-arg=-XX:+UseStringDeduplication")
-        :init-options (:bundles ["/path/to/java-debug.jar"
-                                "/path/to/java-test.jar"])))
+        :init-options (:bundles ["/path/to/bundles.jar"])))
 
 ;; JDTLS JavaConfigurationSettings
 ;; https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
@@ -104,11 +114,14 @@ For custom JDTLS initialization (e.g., Lombok support, multiple JDKs):
 
 ### Configuration Options
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `eglot-jdtls-cache-dir` | Directory for caching JAR source files | `~/.emacs.d/eglot-jdtls` |
-| `eglot-jdtls-crm-separator` | Separator for multiple selections in code actions | `"[ \t]*;[ \t]*"` |
-| `eglot-jdtls-config` | JDTLS server configuration plist | `nil` |
+| Variable                       | Description                                       | Default                  |
+|--------------------------------|---------------------------------------------------|--------------------------|
+| `eglot-jdtls-cache-dir`        | Directory for caching JAR source files            | `~/.emacs.d/eglot-jdtls` |
+| `eglot-jdtls-crm-separator`    | Separator for multiple selections in code actions | `"[ \t]*;[ \t]*"`        |
+| `eglot-jdtls-config`           | JDTLS server configuration plist                  | `nil`                    |
+| `eglot-jdtls-debugger-args`    | Arguments passed to the main class                | `nil`                    |
+| `eglot-jdtls-debugger-vm-args` | JVM arguments passed when running/debugging       | `nil`                    |
+| `eglot-jdtls-debugger-env`     | Environment variables for running/debugging       | `nil`                    |
 
 The `eglot-jdtls-config` plist supports:
 - `:cmd` - JDTLS command (list or function returning list)
@@ -141,12 +154,41 @@ Refactoring operations are available via code actions or specific commands:
 - **Introduce Parameter**: Convert local variable to method parameter
 - **Convert Anonymous to Nested**: Convert anonymous class to named nested class
 
+### Debugging
+
+To enable debugging and testing, add the [java-debug](https://github.com/Microsoft/java-debug) bundle to `eglot-jdtls-config`, you can also install debug bundle via [mason](https://github.com/mason-org/mason.el):
+
+```emacs-lisp
+(setq eglot-jdtls-config
+      '(:init-options (:bundles ["/path/to/com.microsoft.java.debug.plugin-*.jar"])))
+```
+
+Install [eglot-codelens](https://github.com/zsxh/eglot-codelens).
+
+- **Run/Debug CodeLenses**: Click the Run or Debug lens above `main` methods to launch programs via [dape](https://github.com/svaante/dape)
+- **Hot Code Replace**: During a debug session, use `eglot-jdtls-debugger-hot-code-replace` (or `R` in dape-toolbar) to reload changed classes without restarting
+
+### Testing
+
+To enable testing, add the [java-test](https://github.com/microsoft/vscode-java-test) bundle to `eglot-jdtls-config`, you can also install debug bundle via [mason](https://github.com/mason-org/mason.el):
+
+```emacs-lisp
+(setq eglot-jdtls-config
+      '(:init-options (:bundles ["/path/to/com.microsoft.java.test.plugin-*.jar"])))
+```
+
+Install [eglot-codelens](https://github.com/zsxh/eglot-codelens).
+
+- **Run/Debug Test CodeLenses**: Click the Run or Debug lens above test methods to execute JUnit 4/5/6 or TestNG tests via [dape](https://github.com/svaante/dape) (requires [eglot-codelens](https://github.com/zsxh/eglot-codelens))
+- **Test result output** is displayed in the `*eglot-jdtls-test-result*` buffer
+
 ### Commands
 
-| Command | Description |
-|---------|-------------|
-| `eglot-jdtls-organize-imports` | Organize and optimize imports in current buffer |
-| `eglot-jdtls-clear-cache` | Clear the cached decompiled Java source files |
+| Command                                 | Description                                       |
+|-----------------------------------------|---------------------------------------------------|
+| `eglot-jdtls-organize-imports`          | Organize and optimize imports in current buffer   |
+| `eglot-jdtls-clear-cache`               | Clear the cached decompiled Java source files     |
+| `eglot-jdtls-debugger-hot-code-replace` | Reload changed classes in a running debug session |
 
 ### Format Options
 
@@ -186,16 +228,6 @@ Check JDTLS logs with:
 M-x eglot-events-buffer
 ```
 
-### Project Configuration
-
-Ensure your Java project has proper build configuration (Maven/Gradle) for accurate code completion and navigation.
-
-## Integration
-
-### Vertico
-
-The package temporarily disables `vertico-sort-function` for code action selections to preserve the order returned by JDTLS, ensuring consistent and predictable completion candidates.
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
@@ -215,3 +247,4 @@ See [LICENSE](LICENSE) for details.
 - [GitHub Repository](https://github.com/zsxh/eglot-jdtls)
 - [Eclipse JDT Language Server](https://github.com/eclipse-jdtls/eclipse.jdt.ls)
 - [Eglot](https://github.com/joaotavora/eglot)
+- [dape](https://github.com/svaante/dape)

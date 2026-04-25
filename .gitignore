@@ -18,3 +18,4 @@ dist/
 
 # OS generated
 .DS_Store
+/.agent-shell/

@@ -5,8 +5,8 @@
 ;; Author: Zsxh Chen <bnbvbchen@gmail.com>
 ;; Maintainer: Zsxh Chen <bnbvbchen@gmail.com>
 ;; URL: https://github.com/zsxh/eglot-jdtls
-;; Version: 0.1.0
-;; Package-Requires: ((emacs "30.1") (compat "30.1.0.0") (eglot "1.17.30") (jsonrpc "1.0.24"))
+;; Version: 0.2.0
+;; Package-Requires: ((emacs "30.1") (compat "30.1.0.1") (eglot "1.23") (jsonrpc "1.0.28") (dape "0.26.0"))
 ;; Keywords: eglot, tools
 
 ;; This file is not part of GNU Emacs.
@@ -28,7 +28,7 @@
 ;;
 ;; eglot-jdtls provides integration between Eglot and the Eclipse JDT Language Server.
 ;; It enables advanced Java language features including code generation, refactoring,
-;; and navigation through Eglot's LSP client interface.
+;; debugging, testing, and navigation through Eglot's LSP client interface.
 ;;
 ;; Installation
 ;; ------------
@@ -43,27 +43,26 @@
 ;;   (push '((java-mode java-ts-mode) . (eglot-jdtls-server . eglot-jdtls-cmd))
 ;;         eglot-server-programs)
 ;;
-;; For custom JDTLS initialization, configure `eglot-jdtls-config':
+;; For custom JDTLS initialization (e.g., Lombok support, debugging, testing), configure `eglot-jdtls-config':
 ;;
 ;;   (setq eglot-jdtls-config
 ;;         '(:cmd ("jdtls"
 ;;                 "--jvm-arg=-javaagent:/path/to/lombok.jar"
 ;;                 "--jvm-arg=-XX:+UseStringDeduplication")
-;;           :init-options (:bundles ["/path/to/java-debug.jar"
-;;                                   "/path/to/java-test.jar"])))
+;;           :init-options (:bundles ["/path/to/bundles.jar"])))
 ;;
 ;;   ;; JDTLS JavaConfigurationSettings
 ;;   ;; https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
 ;;   (setq-default eglot-workspace-configuration
 ;;                 '(:java
 ;;                   (:configuration
-;;                   (:runtimes [(:name "JavaSE-1.8"
-;;                                 :path "/path/to/JDK_8_HOME")
-;;                               (:name "JavaSE-17"
-;;                                 :path "/path/to/JDK_17_HOME")
-;;                               (:name "JavaSE-21"
-;;                                 :path "/path/to/JDK_21_HOME"
-;;                                 :default t)]))))
+;;                     (:runtimes [(:name "JavaSE-1.8"
+;;                                  :path "/path/to/JDK_8_HOME")
+;;                                 (:name "JavaSE-17"
+;;                                  :path "/path/to/JDK_17_HOME")
+;;                                 (:name "JavaSE-21"
+;;                                  :path "/path/to/JDK_21_HOME"
+;;                                  :default t)]))))
 ;;
 ;; Configuration Options
 ;; ---------------------
@@ -72,6 +71,9 @@
 ;; * `eglot-jdtls-config' - JDTLS server configuration plist
 ;;   - :cmd - JDTLS command (list or function returning list)
 ;;   - :init-options - Initialization options including extendedClientCapabilities and bundles
+;; * `eglot-jdtls-debugger-args' - Arguments passed to the main class when running/debugging
+;; * `eglot-jdtls-debugger-vm-args' - JVM arguments passed when running/debugging
+;; * `eglot-jdtls-debugger-env' - Environment variables for running/debugging
 ;;
 ;; Extended Client Capabilities
 ;; ----------------------------
@@ -108,6 +110,15 @@
 ;; - Introduce Parameter: Convert local variable to method parameter
 ;; - Convert Anonymous to Nested: Convert anonymous class to named nested class
 ;;
+;; **Debugging** (requires dape and java-debug bundle)
+;; - Run and debug Java programs via dape
+;; - Hot code replace in running debug sessions
+;; - Run/Debug CodeLenses on main methods
+;;
+;; **Testing** (requires dape, java-test bundle, and eglot-codelens)
+;; - Run and debug JUnit 4/5/6 and TestNG tests via dape
+;; - Run/Debug CodeLenses on test methods
+;;
 ;; **Navigation**
 ;; - Jump to definitions in JAR files (automatic decompilation via jdt:// URIs)
 ;; - Find references and implementations
@@ -116,6 +127,7 @@
 ;; ------------------
 ;; * `eglot-jdtls-organize-imports' - Organize and optimize imports in current buffer
 ;; * `eglot-jdtls-clear-cache' - Clear the cached decompiled Java source files
+;; * `eglot-jdtls-debugger-hot-code-replace' - Reload changed classes in a running debug session
 ;;
 ;; URI Handler
 ;; -----------
@@ -151,6 +163,14 @@
 (require 'compat)
 (require 'eglot)
 (require 'jsonrpc)
+(require 'dape)
+
+(require 'eglot-jdtls-debugger)
+(require 'eglot-jdtls-tester)
+
+;; Declare external variables to suppress byte-compile warnings
+(defvar crm-separator)
+(defvar vertico-sort-function)
 
 ;; Declare internal Eglot functions to suppress byte-compile warnings
 (declare-function eglot--languages "eglot")
@@ -175,7 +195,40 @@
 
 ;;;###autoload
 (defclass eglot-jdtls-server (eglot-lsp-server)
-  ()
+  ((bundles-loaded
+    :initform nil
+    :documentation "Flag indicating if bundles have been loaded."
+    :accessor eglot-jdtls--bundles-loaded)
+   (bundles-contain-debug
+    :initform nil
+    :documentation "Flag indicating if debug bundle is present."
+    :accessor eglot-jdtls--bundles-contain-debug)
+   (bundles-contain-test
+    :initform nil
+    :documentation "Flag indicating if test bundle is present."
+    :accessor eglot-jdtls--bundles-contain-test)
+   (test-source-paths
+    :initform nil
+    :documentation "Test source paths for the project."
+    :accessor eglot-jdtls--test-source-paths)
+   (test-items-cache
+    :initform nil
+    :documentation "Hash table mapping URI strings to test-item hash tables.
+Each value is a hash-table where each key is a test-item ID and \
+each value is a test-item plist:
+:id - unique identifier
+:uri - test file URI
+:label - display name
+:fullName - fully qualified name
+:testLevel - test level (root=0, workspace=1, workspace-folder=2,
+             project=3, package=4, class=5, method=6, invocation=7)
+:testKind - test framework kind (JUnit5=0, JUnit=1, TestNG=2,
+            JUnit6=3, None=100)
+:projectName - project name
+:range - location range
+:jdtHandler - JDT handler identifier
+:children - list of child test-item id"
+    :accessor eglot-jdtls--test-items-cache))
   :documentation "eclipse's jdt langserver."
   :group 'eglot-jdtls)
 
@@ -270,6 +323,38 @@ Each argument should be a property list.  Returns a new plist."
      :extendedClientCapabilities (plist-get init-options
                                             :extendedClientCapabilities)
      :bundles (plist-get init-options :bundles))))
+
+(defun eglot-jdtls--update-server-state (server)
+  "Update SERVER state from init options."
+  (let* ((init-options (plist-get eglot-jdtls-config :init-options))
+         (bundles (plist-get init-options :bundles)))
+    (setf (eglot-jdtls--bundles-loaded server) t)
+    ;; TODO: allow user customize regex list
+    (setf (eglot-jdtls--bundles-contain-debug server)
+          (cl-some (lambda (bundle)
+                     (string-match-p
+                      "com\\.microsoft\\.java\\.debug\\.plugin[^/]*\\.jar$"
+                      bundle))
+                   bundles))
+    (setf (eglot-jdtls--bundles-contain-test server)
+          (cl-some (lambda (bundle)
+                     (string-match-p
+                      "com\\.microsoft\\.java\\.test\\.plugin[^/]*\\.jar$"
+                      bundle))
+                   bundles))
+    (when-let* ((_ (eglot-jdtls--bundles-contain-test server))
+                (project (project-current))
+                (proj-root (project-root project))
+                (workspace-folder-uri (eglot-path-to-uri proj-root))
+                (test-path-items (eglot-jdtls-tester--test-source-paths
+                                  workspace-folder-uri))
+                (test-paths (seq-map
+                             (lambda (item)
+                               (plist-get item :testSourcePath))
+                             test-path-items)))
+      (setf (eglot-jdtls--test-source-paths server) test-paths)
+      (setf (eglot-jdtls--test-items-cache server)
+            (make-hash-table :test 'equal)))))
 
 ;; CodeAction / Commands
 
@@ -1231,6 +1316,30 @@ ARGUMENTS is a keyword argument containing the command arguments."
     ("_java.reloadBundles.command" [])
     (_ (message "Unknown client command: %s" command))))
 
+(when (require 'eglot-codelens nil 'noerror)
+  (cl-defmethod eglot-codelens-provide-codelens :around
+    ((server eglot-jdtls-server) codelens uri)
+    "Provide CodeLenses for SERVER by appending debug and test lenses
+to CODELENS.
+
+Ensures the server state is up to date.  Appends Run/Debug CodeLenses
+from `eglot-jdtls-debugger--provide-codelens' if the debug bundle is
+present, and test Run/Debug CodeLenses from
+`eglot-jdtls-tester--provide-codelens' if the test bundle is present and
+ the current file is on a test source path.
+URI is the document URI to provide CodeLenses for."
+    (unless (eglot-jdtls--bundles-loaded server)
+      (eglot-jdtls--update-server-state server))
+    (let* (debug-codelens test-codelens)
+      (when (eglot-jdtls--bundles-contain-debug server)
+        (setq debug-codelens (eglot-jdtls-debugger--provide-codelens uri)))
+      (when-let* ((file buffer-file-name)
+                  (_ (eglot-jdtls--bundles-contain-test server))
+                  (test-paths (eglot-jdtls--test-source-paths server))
+                  (_ (eglot-jdtls-tester--on-test-path-p file test-paths)))
+        (setq test-codelens (eglot-jdtls-tester--provide-codelens uri)))
+      (vconcat codelens debug-codelens test-codelens))))
+
 (cl-defmethod eglot-execute :around
   ((server eglot-jdtls-server) action)
   "Custom handler for performing JDT client commands.
@@ -1256,6 +1365,13 @@ Disables vertico-sort-function to preserve order for selection prompts."
       ("java.action.rename" (eglot-jdtls--rename arguments))
       ("java.show.references" (eglot-jdtls--show-references command arguments))
       ("java.show.implementations" (eglot-jdtls--show-references command arguments))
+      ;; vscode-java-debug extension
+      ("java.debug.runCodeLens" (eglot-jdtls-debugger--run-codelens arguments nil))
+      ("java.debug.debugCodeLens" (eglot-jdtls-debugger--run-codelens arguments t))
+      ;; vscode-java-test extension
+      ("_java.test.run" (eglot-jdtls-tester--run-test arguments nil))
+      ("_java.test.debug" (eglot-jdtls-tester--run-test arguments t))
+      ("_java.test.coverage" nil)
       (_ (cl-call-next-method)))))
 
 ;;;###autoload
