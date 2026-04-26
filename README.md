@@ -6,6 +6,10 @@
 
 **eglot-jdtls** integrates the [Eclipse JDT Language Server](https://github.com/eclipse-jdtls/eclipse.jdt.ls) (jdtls) with [Eglot](https://github.com/joaotavora/eglot), providing advanced Java development features in Emacs including code generation, refactoring, debugging, testing, and navigation.
 
+## Screenshots
+
+<img width=70% height=70% alt="Image" src="https://github.com/user-attachments/assets/04b27f12-f927-4bbb-9023-80b87f41c065" />
+
 ### Key Components
 
 | File                      | Description                                                                                        |
