@@ -228,6 +228,11 @@ Check JDTLS logs with:
 M-x eglot-events-buffer
 ```
 
+## TODOs
+
+- [ ] **Analyze test results** - Visualize test case pass/fail status and create dynamic tests in the result buffer (JUnit/TestNG)
+- [ ] **Test coverage support** - Add test coverage support
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
