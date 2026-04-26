@@ -2,47 +2,32 @@
 
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.txt)
 
-**Eclipse JDT Language Server integration with Eglot**
+## Overview
 
-This package provides seamless integration between Eglot (the Emacs LSP client) and the Eclipse JDT Language Server, enabling advanced Java language features including code generation, refactoring, debugging, testing, and navigation.
+**eglot-jdtls** integrates the [Eclipse JDT Language Server](https://github.com/eclipse-jdtls/eclipse.jdt.ls) (jdtls) with [Eglot](https://github.com/joaotavora/eglot), providing advanced Java development features in Emacs including code generation, refactoring, debugging, testing, and navigation.
 
-## Features
+### Key Components
 
-- **Code Generation**
-  - Override methods
-  - Generate `toString()`
-  - Generate `hashCode()` and `equals()`
-  - Generate getters and setters
-  - Generate constructors
-  - Generate delegate methods
+| File                      | Description                                                                                        |
+|---------------------------|----------------------------------------------------------------------------------------------------|
+| `eglot-jdtls.el`          | Core integration: server class, code actions, refactoring, navigation, URI handler                 |
+| `eglot-jdtls-debugger.el` | Debugger support via [dape](https://github.com/svaante/dape): run/debug sessions, hot code replace |
+| `eglot-jdtls-tester.el`   | Test runner support: JUnit 4/5/6, TestNG, test result output                                       |
 
-- **Advanced Refactoring**
-  - Move files between packages
-  - Move instance/static members
-  - Move types to new files or other classes
-  - Extract methods, variables, constants, and fields
-  - Change method signature interactively
-  - Extract interfaces
-  - Introduce parameters
-  - Convert anonymous classes to nested classes
+## Architecture
 
-- **Debugging** (requires [dape](https://github.com/svaante/dape) and [java-debug](https://github.com/Microsoft/java-debug) bundle)
-  - Run and debug Java programs via [dape](https://github.com/svaante/dape)
-  - Hot code replace in running debug sessions
-  - Run/Debug CodeLenses on `main` methods
+eglot-jdtls extends Eglot's LSP client through several mechanisms:
 
-- **Testing** (requires [dape](https://github.com/svaante/dape) and [java-test](https://github.com/microsoft/vscode-java-test) bundle)
-  - Run and debug JUnit 4/5/6 and TestNG tests
-  - Run/Debug CodeLenses on test methods (requires [eglot-codelens](https://github.com/zsxh/eglot-codelens))
+1. **Server Class** (`eglot-jdtls-server`): A subclass of `eglot-lsp-server` that provides JDTLS-specific initialization options, extended client capabilities, and bundle management for conditional feature activation (debugging/testing).
 
-- **Navigation**
-  - Jump to definitions in JAR files with automatic decompilation
-  - Find references and implementations
+2. **Eglot Method Overrides**: The package overrides key Eglot methods:
+   - `eglot-handle-request` — handles JDTLS-specific requests (class file contents, organize imports, code actions)
+   - `eglot-execute :around` — intercepts LSP commands to provide interactive Emacs UI for JDTLS code actions and refactorings
+   - `eglot-codelens-provide-codelens :around` — adds Run/Debug CodeLenses on main methods and test methods
 
-- **Extended LSP Capabilities**
-  - Class file contents support (decompile from JARs)
-  - Advanced import organization
-  - Infer selection for code actions
+3. **URI Handler** (`eglot-jdtls-uri-handler`): Handles `jdt://` URIs for navigating into JAR files and JDK sources, with automatic decompilation and local caching.
+
+4. **Feature Modules**: Debugging and testing are loaded conditionally based on whether the required bundles are configured in `eglot-jdtls-config`.
 
 ## Requirements
 
@@ -53,9 +38,11 @@ This package provides seamless integration between Eglot (the Emacs LSP client) 
 - [eglot-codelens](https://github.com/zsxh/eglot-codelens) (optional, for Run/Debug CodeLenses)
 - [dape-toolbar](https://github.com/zsxh/dape-toolbar) (optional, dape toolbar)
 
-## Installation
+## Getting Started
 
-### Using package-vc
+### Installation
+
+#### Using package-vc
 
 ```emacs-lisp
 (unless (package-installed-p 'eglot-jdtls)
@@ -63,43 +50,41 @@ This package provides seamless integration between Eglot (the Emacs LSP client) 
    '(eglot-jdtls :url "https://github.com/zsxh/eglot-jdtls")))
 ```
 
-### Manual Installation
+#### Manual Installation
 
-Download `eglot-jdtls.el` and add it to your load path:
+Download the `.el` files and add to your load path:
 
 ```emacs-lisp
 (add-to-list 'load-path "/path/to/eglot-jdtls")
 (require 'eglot-jdtls)
 ```
 
-## Configuration
+### Basic Configuration
 
-### Basic Setup
-
-The simplest configuration uses the default `jdtls` command:
+The simplest setup uses the default `jdtls` command:
 
 ```emacs-lisp
 (require 'eglot-jdtls)
 
 (push '((java-mode java-ts-mode) . (eglot-jdtls-server . eglot-jdtls-cmd))
-        eglot-server-programs)
+      eglot-server-programs)
 ```
 
 Then enable `eglot` in Java buffers with `M-x eglot`.
 
 ### Advanced Configuration
 
-For custom JDTLS initialization (e.g., Lombok support, multiple JDKs, debugging, testing):
+For custom JDTLS initialization (Lombok, multiple JDKs, debugging, testing):
 
 ```emacs-lisp
 (setq eglot-jdtls-config
       '(:cmd ("jdtls"
               "--jvm-arg=-javaagent:/path/to/lombok.jar"
               "--jvm-arg=-XX:+UseStringDeduplication")
-        :init-options (:bundles ["/path/to/bundles.jar"])))
+        :init-options (:bundles ["/path/to/debug-bundle.jar"
+                                 "/path/to/test-bundle.jar"])))
 
-;; JDTLS JavaConfigurationSettings
-;; https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
+;; Multiple JDK runtimes via JavaConfigurationSettings
 (setq-default eglot-workspace-configuration
               '(:java
                 (:configuration
@@ -112,77 +97,119 @@ For custom JDTLS initialization (e.g., Lombok support, multiple JDKs, debugging,
                               :default t)]))))
 ```
 
-### Configuration Options
-
-| Variable                       | Description                                       | Default                  |
-|--------------------------------|---------------------------------------------------|--------------------------|
-| `eglot-jdtls-cache-dir`        | Directory for caching JAR source files            | `~/.emacs.d/eglot-jdtls` |
-| `eglot-jdtls-crm-separator`    | Separator for multiple selections in code actions | `"[ \t]*;[ \t]*"`        |
-| `eglot-jdtls-config`           | JDTLS server configuration plist                  | `nil`                    |
-| `eglot-jdtls-debugger-args`    | Arguments passed to the main class                | `nil`                    |
-| `eglot-jdtls-debugger-vm-args` | JVM arguments passed when running/debugging       | `nil`                    |
-| `eglot-jdtls-debugger-env`     | Environment variables for running/debugging       | `nil`                    |
-
-The `eglot-jdtls-config` plist supports:
-- `:cmd` - JDTLS command (list or function returning list)
-- `:init-options` - Initialization options including `extendedClientCapabilities` and `bundles`
-
-## Usage
+## Features
 
 ### Code Generation
 
-Code generation features are available through Eglot's code action interface (`M-x eglot-code-actions`):
+Available through `M-x eglot-code-actions`:
 
-- **Override Methods**: Prompts to select methods from superclass/interfaces
-- **Generate toString()**: Select fields to include
-- **Generate hashCode() & equals()**: Select fields for comparison
-- **Generate Getters & Setters**: Select fields to generate accessors for
-- **Generate Constructors**: Select constructors and fields to initialize
-- **Generate Delegate Methods**: Create wrapper methods delegating to field methods
+| Feature                        | Description                                           |
+|--------------------------------|-------------------------------------------------------|
+| Override Methods               | Select methods from superclass/interfaces to override |
+| Generate toString()            | Select fields to include in the generated method      |
+| Generate hashCode() & equals() | Select fields for comparison                          |
+| Generate Getters & Setters     | Select fields to generate accessors for               |
+| Generate Constructors          | Select constructors and fields to initialize          |
+| Generate Delegate Methods      | Create wrapper methods delegating to field methods    |
 
 ### Refactoring
 
-Refactoring operations are available via code actions or specific commands:
+Available via code actions or specific commands:
 
-- **Move File**: Move `.java` files between packages
-- **Move Instance Method**: Move method to a field's type or parameter's type
-- **Move Static Member**: Move static fields/methods/types to other classes
-- **Move Type**: Move nested types to new files or other classes
-- **Extract Interface**: Create interface from selected class members
-- **Change Signature**: Interactive buffer for modifying method parameters, return types, exceptions, and access modifiers (press `C-c C-c` to apply)
-- **Extract Method/Variable/Constant/Field**: Infer selection and extract
-- **Introduce Parameter**: Convert local variable to method parameter
-- **Convert Anonymous to Nested**: Convert anonymous class to named nested class
+| Feature                                | Description                                                                                                             |
+|----------------------------------------|-------------------------------------------------------------------------------------------------------------------------|
+| Move File                              | Move `.java` files between packages                                                                                     |
+| Move Instance Method                   | Move method to a field's type or parameter's type                                                                       |
+| Move Static Member                     | Move static fields/methods/types to other classes                                                                       |
+| Move Type                              | Move nested types to new files or other classes                                                                         |
+| Extract Interface                      | Create interface from selected class members                                                                            |
+| Change Signature                       | Interactive buffer for modifying method parameters, return types, exceptions, and access modifiers (`C-c C-c` to apply) |
+| Extract Method/Variable/Constant/Field | Infer selection and extract                                                                                             |
+| Introduce Parameter                    | Convert local variable to method parameter                                                                              |
+| Convert Anonymous to Nested            | Convert anonymous class to named nested class                                                                           |
 
 ### Debugging
 
-To enable debugging and testing, add the [java-debug](https://github.com/Microsoft/java-debug) bundle to `eglot-jdtls-config`, you can also install debug bundle via [mason](https://github.com/mason-org/mason.el):
+Requires [dape](https://github.com/svaante/dape) and the [java-debug](https://github.com/Microsoft/java-debug) bundle.
+
+> **Recommand**: Download debug bundles via [mason](https://github.com/mason-org/mason.el).
+
+1. Add the debug bundle to `eglot-jdtls-config`:
 
 ```emacs-lisp
 (setq eglot-jdtls-config
       '(:init-options (:bundles ["/path/to/com.microsoft.java.debug.plugin-*.jar"])))
 ```
 
-Install [eglot-codelens](https://github.com/zsxh/eglot-codelens).
+2. Install [eglot-codelens](https://github.com/zsxh/eglot-codelens) for Run/Debug CodeLenses.
 
-- **Run/Debug CodeLenses**: Click the Run or Debug lens above `main` methods to launch programs via [dape](https://github.com/svaante/dape)
-- **Hot Code Replace**: During a debug session, use `eglot-jdtls-debugger-hot-code-replace` (or `R` in dape-toolbar) to reload changed classes without restarting
+**Features:**
+
+- **Run/Debug CodeLenses**: Click the Run or Debug lens above `main` methods to launch programs via dape
+- **Hot Code Replace**: During a debug session, use `eglot-jdtls-debugger-hot-code-replace` (or `R` in [dape-toolbar](https://github.com/zsxh/dape-toolbar)) to reload changed classes without restarting
 
 ### Testing
 
-To enable testing, add the [java-test](https://github.com/microsoft/vscode-java-test) bundle to `eglot-jdtls-config`, you can also install debug bundle via [mason](https://github.com/mason-org/mason.el):
+Requires [dape](https://github.com/svaante/dape) and the [java-test](https://github.com/microsoft/vscode-java-test) bundle.
+
+> **Recommand**: Download test bundles via [mason](https://github.com/mason-org/mason.el).
+
+1. Add the test bundle to `eglot-jdtls-config`:
 
 ```emacs-lisp
 (setq eglot-jdtls-config
       '(:init-options (:bundles ["/path/to/com.microsoft.java.test.plugin-*.jar"])))
 ```
 
-Install [eglot-codelens](https://github.com/zsxh/eglot-codelens).
+2. Install [eglot-codelens](https://github.com/zsxh/eglot-codelens) for Run/Debug CodeLenses on test methods.
 
-- **Run/Debug Test CodeLenses**: Click the Run or Debug lens above test methods to execute JUnit 4/5/6 or TestNG tests via [dape](https://github.com/svaante/dape) (requires [eglot-codelens](https://github.com/zsxh/eglot-codelens))
-- **Test result output** is displayed in the `*eglot-jdtls-test-result*` buffer
+**Supported Frameworks:**
 
-### Commands
+- JUnit 4
+- JUnit 5 (Jupiter)
+- JUnit 6
+- TestNG
+
+**Features:**
+
+- **Run/Debug Test CodeLenses**: Click the Run or Debug lens above test methods
+- **Test result output**: Results displayed in the `*eglot-jdtls-test-result*` buffer
+
+### Navigation
+
+- **Jump to definitions in JAR files**: Navigate into JAR contents with automatic decompilation
+- **Find references and implementations**: Standard LSP navigation enhanced for Java projects
+
+## Configuration Reference
+
+### Core Options
+
+| Variable                    | Description                                       | Default                  |
+|-----------------------------|---------------------------------------------------|--------------------------|
+| `eglot-jdtls-cache-dir`     | Directory for caching JAR source files            | `~/.emacs.d/eglot-jdtls` |
+| `eglot-jdtls-crm-separator` | Separator for multiple selections in code actions | `"[ \t]*;[ \t]*"`        |
+| `eglot-jdtls-config`        | JDTLS server configuration plist                  | `nil`                    |
+
+### Run/Debug Options
+
+| Variable                       | Description                                 | Default |
+|--------------------------------|---------------------------------------------|---------|
+| `eglot-jdtls-debugger-args`    | Arguments passed to the main class          | `nil`   |
+| `eglot-jdtls-debugger-vm-args` | JVM arguments when running/debugging        | `nil`   |
+| `eglot-jdtls-debugger-env`     | Environment variables for running/debugging | `nil`   |
+
+### `eglot-jdtls-config` plist
+
+The `eglot-jdtls-config` plist supports:
+
+- `:cmd` — JDTLS command (list of strings or a function returning a list)
+- `:init-options` — Initialization options:
+  - `:extendedClientCapabilities` — JDTLS extended capabilities
+  - `:bundles` — List of paths to JDTLS extension bundles (debug, test, etc.)
+
+## Commands Reference
+
+### Interactive Commands
 
 | Command                                 | Description                                       |
 |-----------------------------------------|---------------------------------------------------|
@@ -192,40 +219,52 @@ Install [eglot-codelens](https://github.com/zsxh/eglot-codelens).
 
 ### Format Options
 
-The package respects `tab-width` and `indent-tabs-mode` for refactoring. Set these before executing refactoring commands if you need custom formatting.
-
-## URI Handler
-
-The package handles `jdt://` URIs automatically, fetching and caching decompiled source files from the JDT Language Server. This enables navigation into JAR file contents and JDK sources.
-
-Cached files are stored in `eglot-jdtls-cache-dir` (default: `~/.emacs.d/eglot-jdtls`).
+Refactoring operations respect `tab-width` and `indent-tabs-mode`. Set these before executing refactoring commands for custom formatting.
 
 ## Troubleshooting
 
 ### JDTLS Fails to Start
 
-- Ensure the `jdtls` command is in your PATH
-- Or provide the full path in `eglot-jdtls-config`:
+- Ensure `jdtls` is in your PATH, or provide the full path:
 
 ```emacs-lisp
-(setq eglot-jdtls-config
-      '(:cmd ("/full/path/to/jdtls")))
+(setq eglot-jdtls-config '(:cmd ("/full/path/to/jdtls")))
 ```
 
 ### Class File Navigation Issues
 
-Try clearing the cache:
+Clear the decompilation cache:
 
 ```emacs-lisp
 M-x eglot-jdtls-clear-cache
 ```
 
-### Debugging
+### Debugging JDTLS Communication
 
-Check JDTLS logs with:
+Inspect LSP events:
 
 ```emacs-lisp
 M-x eglot-events-buffer
+```
+
+### Bundles Not Detected
+
+Ensure the bundle JAR paths in `eglot-jdtls-config` are correct and the files exist. The debugger and tester features are only activated when their respective bundles are detected in the server's initialization options.
+
+## Development
+
+### Project Structure
+
+```
+eglot-jdtls/
+├── eglot-jdtls.el           # Core integration
+├── eglot-jdtls-debugger.el  # Debugger support
+├── eglot-jdtls-tester.el    # Test runner support
+├── tests/
+│   └── eglot-jdtls-test.el  # Test suite
+├── CHANGELOG.md
+├── README.md
+└── LICENSE
 ```
 
 ## TODOs
@@ -237,11 +276,9 @@ M-x eglot-events-buffer
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
 
-## License
+### License
 
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
-See [LICENSE](LICENSE) for details.
+GPL-3.0
 
 ## Author
 
