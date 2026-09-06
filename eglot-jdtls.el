@@ -5,7 +5,7 @@
 ;; Author: Zsxh Chen <bnbvbchen@gmail.com>
 ;; Maintainer: Zsxh Chen <bnbvbchen@gmail.com>
 ;; URL: https://github.com/zsxh/eglot-jdtls
-;; Version: 0.2.0
+;; Version: 0.3.0
 ;; Package-Requires: ((emacs "30.1") (compat "31.0.0.2") (eglot "1.23") (jsonrpc "1.0.28") (dape "0.27.1"))
 ;; Keywords: eglot, tools
 

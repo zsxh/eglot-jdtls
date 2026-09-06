@@ -2,11 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.3.0] - 2026-09-06
 
 ### Fixed
 
+- Wrong number of arguments error when Eglot invokes `eglot-jdtls-cmd` with a project argument ([#1](https://github.com/zsxh/eglot-jdtls/issues/1))
 - Compatibility with eglot 1.24, which changed `eglot--apply-workspace-edit` from `(wedit origin)` to `(server wedit origin)`. All workspace edits now go through `eglot-jdtls--apply-edit`, which dispatches on eglot's signature at load time
+- Compatibility with dape 0.27.1, which removed `dape--connection`; debugging and testing now resolve the active session via the new `eglot-jdtls-debugger--connection` helper
+
+### Changed
+
+- Updated dependencies: dape 0.27.1, compat 31.0.0.2
 
 ## [0.2.0] - 2026-04-25
 
