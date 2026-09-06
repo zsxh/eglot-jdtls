@@ -38,7 +38,7 @@ eglot-jdtls extends Eglot's LSP client through several mechanisms:
 - Emacs 30.1 or later
 - [Eglot](https://github.com/joaotavora/eglot) 1.23 or later
 - [Eclipse JDT Language Server](https://github.com/eclipse-jdtls/eclipse.jdt.ls) (jdtls)
-- [dape](https://github.com/svaante/dape) 0.26.0 or later (for debugging and testing)
+- [dape](https://github.com/svaante/dape) 0.27.1 or later (for debugging and testing)
 - [eglot-codelens](https://github.com/zsxh/eglot-codelens) (optional, for Run/Debug CodeLenses)
 - [dape-toolbar](https://github.com/zsxh/dape-toolbar) (optional, dape toolbar)
 

@@ -6,7 +6,7 @@
 ;; Maintainer: Zsxh Chen <bnbvbchen@gmail.com>
 ;; URL: https://github.com/zsxh/eglot-jdtls
 ;; Version: 0.2.0
-;; Package-Requires: ((emacs "30.1") (compat "30.1.0.1") (eglot "1.23") (jsonrpc "1.0.28") (dape "0.26.0"))
+;; Package-Requires: ((emacs "30.1") (compat "31.0.0.2") (eglot "1.23") (jsonrpc "1.0.28") (dape "0.27.1"))
 ;; Keywords: eglot, tools
 
 ;; This file is not part of GNU Emacs.

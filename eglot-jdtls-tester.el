@@ -341,7 +341,7 @@ the dape configuration with the runner's port.  On error, kill the
 newly created runner to prevent resource leaks."
   (when-let*
       ((dape-active-p dape-active-mode)
-       (conn dape--connection)
+       (conn (eglot-jdtls-debugger--connection))
        (dape-conf (dape--config conn))
        (java-type-p (string= "java" (plist-get dape-conf :type)))
        (launch-request-p (string= "launch" (plist-get dape-conf :request)))

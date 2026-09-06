@@ -14,7 +14,7 @@
 (source "gnu")
 
 (depends-on "emacs" "30.1")
-(depends-on "compat" "30.1.0.1")
+(depends-on "compat" "31.0.0.2")
 (depends-on "eglot" "1.23")
 (depends-on "jsonrpc" "1.0.28")
-(depends-on "dape" "0.26.0")
+(depends-on "dape" "0.27.1")

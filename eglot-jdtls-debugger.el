@@ -71,6 +71,12 @@ TESTNG args issue: https://github.com/microsoft/vscode-java-test/issues/1297"
        (autobuild-enabled (plist-get autobuild :enabled)))
     (equal autobuild-enabled t)))
 
+(defun eglot-jdtls-debugger--connection ()
+  "Return the active dape debug connection, or nil if there is none.
+Prefers the selected connection and falls back to the most recently
+created session with an active thread; see `dape--live-connection'."
+  (dape--live-connection 'last t))
+
 ;;;###autoload
 (defun eglot-jdtls-debugger-hot-code-replace ()
   "Reload changed classes in a running Java debug session.
@@ -81,7 +87,7 @@ workspace first.  If the session is in run mode (no debug), prompt to
 restart with debug enabled."
   (interactive)
   (when dape-active-mode
-    (let* ((dape-conn dape--connection)
+    (let* ((dape-conn (eglot-jdtls-debugger--connection))
            (dape-conf (dape--config dape-conn))
            (debug-p (equal (dape-config-get dape-conf :noDebug) :json-false)))
       (if debug-p
@@ -89,7 +95,7 @@ restart with debug enabled."
             (unless (eglot-jdtls-debugger--autobuild-p)
               (eglot-jdtls-debugger--build-workspace nil nil nil))
             (dape-request
-             dape--connection "redefineClasses" eglot-{}
+             dape-conn "redefineClasses" eglot-{}
              (lambda (body errMsg)
                (if errMsg
                    (message (format "[eglot-jdtls]: %s" errMsg))
@@ -116,9 +122,9 @@ is not supported by run mode, would you like to restart the program?")
                   "Hot Code Replace"
                   nerd-icons-yellow
                   (lambda ()
-                    (let* ((dape-conn dape--connection)
-                           (dape-conf (dape--config dape-conn))
-                           (dape-type (dape-config-get dape-conf :type)))
+                    (when-let* ((dape-conn (eglot-jdtls-debugger--connection))
+                                (dape-conf (dape--config dape-conn))
+                                (dape-type (dape-config-get dape-conf :type)))
                       (string-equal dape-type "java")))))
                t)
   (define-key dape-toolbar-info-mode-map "R"
