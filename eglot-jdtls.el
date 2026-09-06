@@ -288,7 +288,7 @@ each value is a test-item plist:
 
 ;; Eglot jdtls config
 
-(defun eglot-jdtls-cmd (_interactive)
+(defun eglot-jdtls-cmd (&optional _interactive _project)
   "Return the JDT Language Server command for Eglot."
   (let ((cmd (or (plist-get eglot-jdtls-config :cmd)
                  (plist-get eglot-jdtls--default-config :cmd))))
