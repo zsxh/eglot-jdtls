@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Compatibility with eglot 1.24, which changed `eglot--apply-workspace-edit` from `(wedit origin)` to `(server wedit origin)`. All workspace edits now go through `eglot-jdtls--apply-edit`, which dispatches on eglot's signature at load time
+
 ## [0.2.0] - 2026-04-25
 
 ### Added

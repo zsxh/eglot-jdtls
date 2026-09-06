@@ -459,11 +459,29 @@ Unrecognized operations are forwarded to the default file handlers."
 
 (add-to-list 'file-name-handler-alist '("\\`jdt://" . eglot-jdtls-uri-handler))
 
-(defun eglot-jdtls--apply-workspaceEdit (arguments)
+;; Compatibility: eglot 1.24 changed the signature of
+;; `eglot--apply-workspace-edit' from (wedit origin) to (server wedit origin).
+(defvar eglot-jdtls--apply-edit-takes-server-p
+  (ignore-errors
+    (> (car (func-arity #'eglot--apply-workspace-edit)) 2))
+  "Non-nil if `eglot--apply-workspace-edit' takes a leading SERVER argument.
+This is the case since eglot 1.24.")
+
+(defun eglot-jdtls--apply-edit (server wedit origin)
+  "Apply workspace edit WEDIT from SERVER using ORIGIN as the originating command.
+Wraps `eglot--apply-workspace-edit', whose signature changed from
+\\(WEDIT ORIGIN) to (SERVER WEDIT ORIGIN) in eglot 1.24."
+  (if eglot-jdtls--apply-edit-takes-server-p
+      (eglot--apply-workspace-edit server wedit origin)
+    (eglot--apply-workspace-edit wedit origin)))
+
+(defun eglot-jdtls--apply-workspaceEdit (server arguments)
   "Apply workspace edit(s) ARGUMENTS from JDT LS command.
+
+SERVER is the JDT Language Server instance.
 Command is `java.apply.workspaceEdit'."
   (mapc (lambda (edit)
-          (eglot--apply-workspace-edit edit this-command))
+          (eglot-jdtls--apply-edit server edit this-command))
         arguments))
 
 (defun eglot-jdtls--override-methods-prompt (server arguments)
@@ -493,7 +511,7 @@ ARGUMENTS is the context information for where to add the override methods."
                               :java/addOverridableMethods
                               (list :overridableMethods selected-methods
                                     :context argument))))
-    (eglot--apply-workspace-edit add-methods-result this-command)))
+    (eglot-jdtls--apply-edit server add-methods-result this-command)))
 
 (defun eglot-jdtls--show-references (command arguments)
   "Display Java references using Emacs xref interface.
@@ -551,7 +569,7 @@ ARGUMENTS is a list containing context information for the class."
                                server :java/generateToString
                                (list :fields selected-fields
                                      :context params))))
-        (eglot--apply-workspace-edit result this-command)))))
+        (eglot-jdtls--apply-edit server result this-command)))))
 
 (defun eglot-jdtls--hashCode-equals-prompt (server arguments)
   "Prompt user to generate hashCode and equals methods for Java class.
@@ -579,7 +597,7 @@ ARGUMENTS is a list containing context information for the class."
                                 :fields selected-fields
                                 :context params
                                 :regenerate (not (seq-empty-p existingMethods))))))
-        (eglot--apply-workspace-edit result this-command)))))
+        (eglot-jdtls--apply-edit server result this-command)))))
 
 (defun eglot-jdtls--generate-accessors-prompt (server arguments)
   "Prompt user to generate accessor methods (getters and setters) for Java fields.
@@ -603,7 +621,7 @@ ARGUMENTS is a list containing context information for the class."
                   server :java/generateAccessors
                   (list :accessors selected-accessors
                         :context params))))
-    (eglot--apply-workspace-edit result this-command)))
+    (eglot-jdtls--apply-edit server result this-command)))
 
 (defun eglot-jdtls--generate-constructors-prompt (server arguments)
   "Prompt user to generate constructors for Java class.
@@ -637,7 +655,7 @@ ARGUMENTS is a list containing context information for the class."
                                 (list :context params
                                       :constructors selected-constructors
                                       :fields selected-fields))))
-    (eglot--apply-workspace-edit result this-command)))
+    (eglot-jdtls--apply-edit server result this-command)))
 
 (defun eglot-jdtls--generate-delegate-methods-prompt-support (server arguments)
   "Prompt user to generate delegate methods for Java fields.
@@ -677,7 +695,7 @@ ARGUMENTS is a list containing context information for the class."
                 server :java/generateDelegateMethods
                 (list :context params
                       :delegateEntries selected-methods))))
-    (eglot--apply-workspace-edit result this-command)))
+    (eglot-jdtls--apply-edit server result this-command)))
 
 (defun eglot-jdtls--refactor-edit (server refactor-edit)
   "Apply a JDT LS refactoring edit result to the workspace.
@@ -692,7 +710,7 @@ REFACTOR-EDIT is a map containing the refactoring result with:
     (when err
       (message "%s" err))
     (when edit
-      (eglot--apply-workspace-edit edit this-command))
+      (eglot-jdtls--apply-edit server edit this-command))
     (when command
       (eglot-execute server command))))
 
@@ -1354,7 +1372,7 @@ Disables vertico-sort-function to preserve order for selection prompts."
         (arguments (plist-get action :arguments))
         (vertico-sort-function nil))
     (pcase command
-      ("java.apply.workspaceEdit" (eglot-jdtls--apply-workspaceEdit arguments))
+      ("java.apply.workspaceEdit" (eglot-jdtls--apply-workspaceEdit server arguments))
       ("java.action.overrideMethodsPrompt" (eglot-jdtls--override-methods-prompt server arguments))
       ("java.action.generateToStringPrompt" (eglot-jdtls--generate-toString-prompt server arguments))
       ("java.action.hashCodeEqualsPrompt" (eglot-jdtls--hashCode-equals-prompt server arguments))
@@ -1378,15 +1396,16 @@ Disables vertico-sort-function to preserve order for selection prompts."
 (defun eglot-jdtls-organize-imports ()
   "Organize imports in the current Java buffer using Eglot LSP."
   (interactive)
-  (jsonrpc-async-request
-   (eglot--current-server-or-lose)
-   :java/organizeImports
-   `(:textDocument (:uri ,(eglot-path-to-uri (buffer-file-name) :truenamep t))
-     :range (:start (:line 0 :character 0)
-             :end (:line 0 :character 0))
-     :context (:diagnostics []))
-   :success-fn (lambda (result)
-                 (eglot--apply-workspace-edit result this-command))))
+  (let ((server (eglot--current-server-or-lose)))
+    (jsonrpc-async-request
+     server
+     :java/organizeImports
+     `(:textDocument (:uri ,(eglot-path-to-uri (buffer-file-name) :truenamep t))
+       :range (:start (:line 0 :character 0)
+               :end (:line 0 :character 0))
+       :context (:diagnostics []))
+     :success-fn (lambda (result)
+                   (eglot-jdtls--apply-edit server result this-command)))))
 
 ;;;###autoload
 (defun eglot-jdtls-clear-cache ()
